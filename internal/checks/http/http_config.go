@@ -8,9 +8,10 @@ import (
 	"strings"
 	"time" // Added for seeding rand
 
-	"github.com/MOYARU/PRS/internal/checks"
-	"github.com/MOYARU/PRS/internal/engine"
-	"github.com/MOYARU/PRS/internal/report"
+	"github.com/MOYARU/PRS-project/internal/checks"
+	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context" // New import with alias
+	msges "github.com/MOYARU/PRS-project/internal/messages"        // New import for messages
+	"github.com/MOYARU/PRS-project/internal/report"
 )
 
 func init() {
@@ -18,7 +19,7 @@ func init() {
 }
 
 // CheckHTTPConfiguration performs various checks on HTTP protocol settings.
-func CheckHTTPConfiguration(ctx *checks.Context) ([]report.Finding, error) {
+func CheckHTTPConfiguration(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 
 	if ctx.Response == nil {
@@ -32,7 +33,7 @@ func CheckHTTPConfiguration(ctx *checks.Context) ([]report.Finding, error) {
 	findings = append(findings, checkOPTIONSMethod(ctx)...)
 
 	// PUT / DELETE 허용 여부 (Active scan only)
-	if ctx.Mode == checks.Active {
+	if ctx.Mode == ctxpkg.Active {
 		findings = append(findings, checkPUTDELETEMethods(ctx)...)
 	}
 
@@ -49,7 +50,7 @@ func CheckHTTPConfiguration(ctx *checks.Context) ([]report.Finding, error) {
 }
 
 // checkTRACEMethod checks if the TRACE method is enabled.
-func checkTRACEMethod(ctx *checks.Context) []report.Finding {
+func checkTRACEMethod(ctx *ctxpkg.Context) []report.Finding {
 	var findings []report.Finding
 	if ctx.FinalURL.Scheme != "https" { // Only check for TRACE over HTTPS to avoid plaintext issues
 		return findings
@@ -62,8 +63,7 @@ func checkTRACEMethod(ctx *checks.Context) []report.Finding {
 	}
 
 	// Use a new client that doesn't follow redirects for this specific probe
-	client := engine.NewHTTPClient(false, nil)
-	resp, err := client.Do(req)
+	resp, err := ctx.HTTPClient.Do(req)
 	if err != nil {
 		return findings
 	}
@@ -78,13 +78,14 @@ func checkTRACEMethod(ctx *checks.Context) []report.Finding {
 
 		// If the response body contains the TRACE request itself, it's enabled
 		if strings.Contains(bodyString, "TRACE / HTTP/1.1") || strings.Contains(bodyString, "TRACE "+ctx.FinalURL.Path+" HTTP/1.1") {
+			msg := msges.GetMessage("TRACE_METHOD_ENABLED")
 			findings = append(findings, report.Finding{
 				ID:       "TRACE_METHOD_ENABLED",
 				Category: string(checks.CategoryHTTPProtocol),
 				Severity: report.SeverityMedium,
-				Title:    "TRACE 메서드 활성화",
-				Message:  "HTTP TRACE 메서드가 활성화되어 XST (Cross-Site Tracing) 공격에 취약할 수 있습니다.",
-				Fix:      "웹 서버 설정에서 TRACE 메서드를 비활성화하십시오.",
+				Title:    msg.Title,
+				Message:  msg.Message,
+				Fix:      msg.Fix,
 			})
 		}
 	}
@@ -92,7 +93,7 @@ func checkTRACEMethod(ctx *checks.Context) []report.Finding {
 }
 
 // checkOPTIONSMethod checks for over-exposed OPTIONS method.
-func checkOPTIONSMethod(ctx *checks.Context) []report.Finding {
+func checkOPTIONSMethod(ctx *ctxpkg.Context) []report.Finding {
 	var findings []report.Finding
 
 	// Make an OPTIONS request
@@ -101,8 +102,7 @@ func checkOPTIONSMethod(ctx *checks.Context) []report.Finding {
 		return findings
 	}
 
-	client := engine.NewHTTPClient(false, nil)
-	resp, err := client.Do(req)
+	resp, err := ctx.HTTPClient.Do(req)
 	if err != nil {
 		return findings
 	}
@@ -113,13 +113,14 @@ func checkOPTIONSMethod(ctx *checks.Context) []report.Finding {
 		if allowHeader != "" {
 			allowedMethods := strings.Split(allowHeader, ",")
 			if len(allowedMethods) > 3 { // More than GET, HEAD, POST typically indicates over-exposure
+				msg := msges.GetMessage("OPTIONS_OVER_EXPOSED")
 				findings = append(findings, report.Finding{
 					ID:       "OPTIONS_OVER_EXPOSED",
 					Category: string(checks.CategoryHTTPProtocol),
 					Severity: report.SeverityLow,
-					Title:    "OPTIONS 메서드 과다 노출",
-					Message:  fmt.Sprintf("OPTIONS 메서드를 통해 허용되는 HTTP 메서드('%s')가 과도하게 노출되어 정보 유출 위험이 있습니다.", allowHeader),
-					Fix:      "웹 서버 설정에서 OPTIONS 메서드를 통해 노출되는 메서드를 최소화하십시오.",
+					Title:    msg.Title,
+					Message:  fmt.Sprintf(msg.Message, allowHeader),
+					Fix:      msg.Fix,
 				})
 			}
 		}
@@ -128,7 +129,7 @@ func checkOPTIONSMethod(ctx *checks.Context) []report.Finding {
 }
 
 // checkPUTDELETEMethods checks if PUT/DELETE methods are allowed (active scan).
-func checkPUTDELETEMethods(ctx *checks.Context) []report.Finding {
+func checkPUTDELETEMethods(ctx *ctxpkg.Context) []report.Finding {
 	var findings []report.Finding
 	testURL := ctx.FinalURL.String() + "/prs_test_file_" + generateRandomString(10) // Use a random file name
 
@@ -137,18 +138,18 @@ func checkPUTDELETEMethods(ctx *checks.Context) []report.Finding {
 	if err != nil {
 		return findings
 	}
-	client := engine.NewHTTPClient(false, nil)
-	putResp, err := client.Do(putReq)
+	putResp, err := ctx.HTTPClient.Do(putReq)
 	if err == nil {
 		defer putResp.Body.Close()
 		if putResp.StatusCode >= 200 && putResp.StatusCode < 300 || putResp.StatusCode == http.StatusCreated || putResp.StatusCode == http.StatusNoContent {
+			msg := msges.GetMessage("PUT_METHOD_ALLOWED")
 			findings = append(findings, report.Finding{
 				ID:       "PUT_METHOD_ALLOWED",
 				Category: string(checks.CategoryHTTPProtocol),
 				Severity: report.SeverityHigh,
-				Title:    "PUT 메서드 허용",
-				Message:  fmt.Sprintf("웹 서버가 임의의 경로에 PUT 메서드를 허용하여 파일 생성/수정에 취약할 수 있습니다. 테스트 경로: %s", testURL),
-				Fix:      "웹 서버 설정에서 PUT 메서드를 필요한 경우에만 허용하고, 강력한 인증 및 권한 부여를 적용하십시오.",
+				Title:    msg.Title,
+				Message:  fmt.Sprintf(msg.Message, testURL),
+				Fix:      msg.Fix,
 			})
 		}
 	}
@@ -158,17 +159,18 @@ func checkPUTDELETEMethods(ctx *checks.Context) []report.Finding {
 	if err != nil {
 		return findings
 	}
-	deleteResp, err := client.Do(deleteReq)
+	deleteResp, err := ctx.HTTPClient.Do(deleteReq)
 	if err == nil {
 		defer deleteResp.Body.Close()
 		if deleteResp.StatusCode >= 200 && deleteResp.StatusCode < 300 || deleteResp.StatusCode == http.StatusAccepted || deleteResp.StatusCode == http.StatusNoContent {
+			msg := msges.GetMessage("DELETE_METHOD_ALLOWED")
 			findings = append(findings, report.Finding{
 				ID:       "DELETE_METHOD_ALLOWED",
 				Category: string(checks.CategoryHTTPProtocol),
 				Severity: report.SeverityHigh,
-				Title:    "DELETE 메서드 허용",
-				Message:  fmt.Sprintf("웹 서버가 임의의 경로에 DELETE 메서드를 허용하여 파일 삭제에 취약할 수 있습니다. 테스트 경로: %s", testURL),
-				Fix:      "웹 서버 설정에서 DELETE 메서드를 필요한 경우에만 허용하고, 강력한 인증 및 권한 부여를 적용하십시오.",
+				Title:    msg.Title,
+				Message:  fmt.Sprintf(msg.Message, testURL),
+				Fix:      msg.Fix,
 			})
 		}
 	}

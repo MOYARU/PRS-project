@@ -8,53 +8,53 @@ import (
 
 	"golang.org/x/net/html" // Added for HTML parsing
 
-	"github.com/MOYARU/PRS/internal/checks"
-	"github.com/MOYARU/PRS/internal/engine"
-	"github.com/MOYARU/PRS/internal/report"
+	"github.com/MOYARU/PRS-project/internal/checks"
+	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context" // New import with alias
+	"github.com/MOYARU/PRS-project/internal/engine"
+	msges "github.com/MOYARU/PRS-project/internal/messages" // New import for messages
+	"github.com/MOYARU/PRS-project/internal/report"
 )
 
-// CheckWebContentExposure performs checks for exposed web content like robots.txt, sitemap.xml, etc.
-func CheckWebContentExposure(ctx *checks.Context) ([]report.Finding, error) {
+// CheckWebContentExposure performs various checks on exposed web content like robots.txt, sitemap.xml, etc.
+func CheckWebContentExposure(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 
-	// robots.txt
-	findings = append(findings, checkPathExposure(ctx, "/robots.txt", "robots.txt 파일 노출", checks.CategoryFileExposure)...)
+	// Active Checks: File probes
+	if ctx.Mode == ctxpkg.Active {
+		// robots.txt
+		findings = append(findings, checkPathExposure(ctx, "/robots.txt", "ROBOTS_TXT_EXPOSED", checks.CategoryFileExposure)...)
 
-	// sitemap.xml
-	findings = append(findings, checkPathExposure(ctx, "/sitemap.xml", "sitemap.xml 파일 노출", checks.CategoryFileExposure)...)
+		// sitemap.xml
+		findings = append(findings, checkPathExposure(ctx, "/sitemap.xml", "SITEMAP_XML_EXPOSED", checks.CategoryFileExposure)...)
 
-	// security.txt
-	findings = append(findings, checkPathExposure(ctx, "/.well-known/security.txt", "security.txt 파일 노출", checks.CategoryFileExposure)...)
+		// security.txt
+		findings = append(findings, checkPathExposure(ctx, "/.well-known/security.txt", "SECURITY_TXT_EXPOSED", checks.CategoryFileExposure)...)
 
-	// .well-known/ directory listing
-	findings = append(findings, checkPathExposure(ctx, "/.well-known/", ".well-known 디렉토리 노출", checks.CategoryFileExposure)...)
+		// .well-known/ directory listing
+		findings = append(findings, checkPathExposure(ctx, "/.well-known/", "WELL_KNOWN_EXPOSED", checks.CategoryFileExposure)...)
 
-	// .git exposure
-	findings = append(findings, checkPathExposure(ctx, "/.git/HEAD", ".git 디렉토리 노출 (HEAD 파일)", checks.CategoryFileExposure)...)
-	findings = append(findings, checkPathExposure(ctx, "/.git/config", ".git 디렉토리 노출 (config 파일)", checks.CategoryFileExposure)...)
+		// .git exposure
+		findings = append(findings, checkPathExposure(ctx, "/.git/HEAD", "GIT_HEAD_EXPOSED", checks.CategoryFileExposure)...)
+		findings = append(findings, checkPathExposure(ctx, "/.git/config", "GIT_CONFIG_EXPOSED", checks.CategoryFileExposure)...)
 
-	// .env exposure
-	findings = append(findings, checkPathExposure(ctx, "/.env", ".env 파일 노출", checks.CategoryFileExposure)...)
+		// .env exposure
+		findings = append(findings, checkPathExposure(ctx, "/.env", "ENV_EXPOSED", checks.CategoryFileExposure)...)
 
-	// CI/CD file traces (e.g., .travis.yml, .gitlab-ci.yml, Jenkinsfile)
-	findings = append(findings, checkPathExposure(ctx, "/.travis.yml", ".travis.yml (CI/CD) 파일 노출", checks.CategoryFileExposure)...)
-	findings = append(findings, checkPathExposure(ctx, "/.gitlab-ci.yml", ".gitlab-ci.yml (CI/CD) 파일 노출", checks.CategoryFileExposure)...)
-	findings = append(findings, checkPathExposure(ctx, "/Jenkinsfile", "Jenkinsfile (CI/CD) 파일 노출", checks.CategoryFileExposure)...)
+		// CI/CD file traces (e.g., .travis.yml, .gitlab-ci.yml, Jenkinsfile)
+		findings = append(findings, checkPathExposure(ctx, "/.travis.yml", "TRAVIS_YML_EXPOSED", checks.CategoryFileExposure)...)
+		findings = append(findings, checkPathExposure(ctx, "/.gitlab-ci.yml", "GITLAB_CI_YML_EXPOSED", checks.CategoryFileExposure)...)
+		findings = append(findings, checkPathExposure(ctx, "/Jenkinsfile", "JENKINSFILE_EXPOSED", checks.CategoryFileExposure)...)
 
-	// Backup files (.bak, ~) - This is hard to detect generically without a wordlist or known patterns.
-	// Placeholder for now.
+		// Backup files (.bak, ~) - Placeholder
 
-	// Cloud metadata endpoint access (AWS/GCP)
-	// This requires making requests to specific internal IPs (e.g., 169.254.169.254) which might not be reachable
-	// from the scanner's perspective, or could trigger alerts. More complex.
-	// Placeholder for now.
+		// Cloud metadata endpoint access (AWS/GCP) - Placeholder
 
-	// favicon hash 기반 프레임워크 추정 - Requires specific logic for hashing favicons and comparing.
-	// Placeholder for now.
+		// favicon hash 기반 프레임워크 추정 - Placeholder
 
-	// 디버그 페이지 흔적 (/actuator, /debug 존재 여부만)
-	findings = append(findings, checkPathExposure(ctx, "/actuator", "/actuator 디버그 엔드포인트 노출", checks.CategoryInfrastructure)...)
-	findings = append(findings, checkPathExposure(ctx, "/debug", "/debug 디버그 엔드포인트 노출", checks.CategoryInfrastructure)...)
+		// 디버그 페이지 흔적 (/actuator, /debug 존재 여부만)
+		findings = append(findings, checkPathExposure(ctx, "/actuator", "ACTUATOR_ENDPOINT_EXPOSED", checks.CategoryInfrastructure)...)
+		findings = append(findings, checkPathExposure(ctx, "/debug", "DEBUG_ENDPOINT_EXPOSED", checks.CategoryInfrastructure)...)
+	}
 
 	// K. 클라이언트(브라우저) 보안
 	if ctx.Response != nil && ctx.Response.StatusCode == http.StatusOK {
@@ -63,9 +63,13 @@ func CheckWebContentExposure(ctx *checks.Context) ([]report.Finding, error) {
 			bodyBytes, err := engine.DecodeResponseBody(ctx.Response)
 			if err == nil {
 				bodyString := string(bodyBytes)
-				findings = append(findings, checkMixedContent(ctx, bodyString)...)
-				findings = append(findings, checkIframeSandbox(ctx, bodyString)...)
-				findings = append(findings, checkInlineScripts(ctx, bodyString)...) // Added inline scripts check
+				// Parse HTML once and reuse the node tree
+				doc, err := html.Parse(strings.NewReader(bodyString))
+				if err == nil {
+					findings = append(findings, checkMixedContent(ctx, doc)...)
+					findings = append(findings, checkIframeSandbox(ctx, doc)...)
+					findings = append(findings, checkInlineScripts(ctx, doc)...)
+				}
 			}
 		}
 	}
@@ -74,7 +78,8 @@ func CheckWebContentExposure(ctx *checks.Context) ([]report.Finding, error) {
 }
 
 // checkPathExposure attempts to fetch a specific path and reports if it's accessible.
-func checkPathExposure(ctx *checks.Context, path, title string, category checks.Category) []report.Finding {
+// It now takes the message ID as a parameter.
+func checkPathExposure(ctx *ctxpkg.Context, path string, msgID string, category checks.Category) []report.Finding {
 	var findings []report.Finding
 	targetURL := resolveRelativeURL(ctx.FinalURL, path)
 
@@ -87,13 +92,15 @@ func checkPathExposure(ctx *checks.Context, path, title string, category checks.
 	// Check if the status code indicates public exposure (e.g., 200 OK, not 404 Not Found)
 	// We might need to refine this to ignore 403 Forbidden if it's considered "not exposed" in some contexts
 	if resp.Response.StatusCode == http.StatusOK {
+		msg := msges.GetMessage(msgID)
 		findings = append(findings, report.Finding{
-			ID:       strings.ReplaceAll(strings.ToUpper(path), "/", "_") + "_EXPOSED",
-			Category: string(category),
-			Severity: report.SeverityMedium,
-			Title:    title,
-			Message:  fmt.Sprintf("민감할 수 있는 파일/디렉토리 '%s'가 외부에 노출되어 있습니다.", path),
-			Fix:      "해당 파일/디렉토리에 대한 외부 접근을 차단하거나 제거하십시오.",
+			ID:                         strings.ReplaceAll(strings.ToUpper(path), "/", "_") + "_EXPOSED", // Dynamic ID based on path
+			Category:                   string(category),
+			Severity:                   report.SeverityMedium,
+			Title:                      msg.Title,
+			Message:                    fmt.Sprintf(msg.Message, path),
+			Fix:                        msg.Fix,
+			IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 		})
 	}
 	return findings
@@ -106,16 +113,11 @@ func resolveRelativeURL(baseURL *url.URL, relativePath string) *url.URL {
 }
 
 // checkMixedContent detects mixed content issues on HTTPS pages.
-func checkMixedContent(ctx *checks.Context, body string) []report.Finding {
+func checkMixedContent(ctx *ctxpkg.Context, doc *html.Node) []report.Finding {
 	var findings []report.Finding
 
 	// Only relevant for HTTPS pages
 	if ctx.FinalURL.Scheme != "https" {
-		return findings
-	}
-
-	doc, err := html.Parse(strings.NewReader(body))
-	if err != nil {
 		return findings
 	}
 
@@ -139,13 +141,15 @@ func checkMixedContent(ctx *checks.Context, body string) []report.Finding {
 				for _, a := range n.Attr {
 					if a.Key == attrName {
 						if strings.HasPrefix(a.Val, "http://") {
+							msg := msges.GetMessage("MIXED_CONTENT_DETECTED")
 							findings = append(findings, report.Finding{
-								ID:       "MIXED_CONTENT_DETECTED",
-								Category: string(checks.CategoryClientSecurity),
-								Severity: report.SeverityMedium,
-								Title:    "Mixed Content 감지",
-								Message:  fmt.Sprintf("HTTPS 페이지에서 안전하지 않은 HTTP 리소스 '%s'를 로드합니다.", a.Val),
-								Fix:      "모든 리소스를 HTTPS로 로드하도록 변경하거나 상대 경로를 사용하십시오.",
+								ID:                         "MIXED_CONTENT_DETECTED",
+								Category:                   string(checks.CategoryClientSecurity),
+								Severity:                   report.SeverityMedium,
+								Title:                      msg.Title,
+								Message:                    fmt.Sprintf(msg.Message, a.Val),
+								Fix:                        msg.Fix,
+								IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 							})
 							// Report only once per resource
 							break
@@ -164,13 +168,8 @@ func checkMixedContent(ctx *checks.Context, body string) []report.Finding {
 }
 
 // checkIframeSandbox detects if iframes are missing the sandbox attribute.
-func checkIframeSandbox(ctx *checks.Context, body string) []report.Finding {
+func checkIframeSandbox(ctx *ctxpkg.Context, doc *html.Node) []report.Finding {
 	var findings []report.Finding
-
-	doc, err := html.Parse(strings.NewReader(body))
-	if err != nil {
-		return findings
-	}
 
 	var f func(*html.Node)
 	f = func(n *html.Node) {
@@ -190,13 +189,15 @@ func checkIframeSandbox(ctx *checks.Context, body string) []report.Finding {
 						break
 					}
 				}
+				msg := msges.GetMessage("IFRAME_SANDBOX_MISSING")
 				findings = append(findings, report.Finding{
-					ID:       "IFRAME_SANDBOX_MISSING",
-					Category: string(checks.CategoryClientSecurity),
-					Severity: report.SeverityMedium,
-					Title:    "Iframe Sandbox 속성 미사용",
-					Message:  fmt.Sprintf("<iframe> 태그에 sandbox 속성이 없어 잠재적인 클릭재킹 또는 스크립트 실행 위험이 있습니다. (src: %s)", src),
-					Fix:      "모든 <iframe> 태그에 sandbox 속성을 추가하여 포함된 콘텐츠의 권한을 제한하십시오.",
+					ID:                         "IFRAME_SANDBOX_MISSING",
+					Category:                   string(checks.CategoryClientSecurity),
+					Severity:                   report.SeverityMedium,
+					Title:                      msg.Title,
+					Message:                    fmt.Sprintf(msg.Message, src),
+					Fix:                        msg.Fix,
+					IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 				})
 			}
 		}
@@ -210,13 +211,8 @@ func checkIframeSandbox(ctx *checks.Context, body string) []report.Finding {
 }
 
 // checkInlineScripts checks for the presence of inline <script> tags without a 'src' attribute.
-func checkInlineScripts(ctx *checks.Context, body string) []report.Finding {
+func checkInlineScripts(ctx *ctxpkg.Context, doc *html.Node) []report.Finding {
 	var findings []report.Finding
-
-	doc, err := html.Parse(strings.NewReader(body))
-	if err != nil {
-		return findings
-	}
 
 	// Check if Content-Security-Policy header exists and is strict enough
 	cspHeader := ctx.Response.Header.Get("Content-Security-Policy")
@@ -244,13 +240,15 @@ func checkInlineScripts(ctx *checks.Context, body string) []report.Finding {
 			if isInline && strings.TrimSpace(n.FirstChild.Data) != "" { // Check if it's not an empty script tag
 				// If CSP is not strict, or absent, report inline scripts
 				if !hasStrictCSP {
+					msg := msges.GetMessage("INLINE_SCRIPT_DETECTED")
 					findings = append(findings, report.Finding{
-						ID:       "INLINE_SCRIPT_DETECTED",
-						Category: string(checks.CategoryClientSecurity),
-						Severity: report.SeverityMedium,
-						Title:    "인라인 스크립트 사용 감지",
-						Message:  "Content-Security-Policy(CSP)가 없거나 약하여 인라인 스크립트가 허용됩니다. 이는 XSS 공격 위험을 증가시킬 수 있습니다.",
-						Fix:      "모든 인라인 스크립트를 외부 파일로 분리하고, 엄격한 Content-Security-Policy (예: 'nonce' 또는 'hash' 사용, 'unsafe-inline' 제거)를 적용하십시오.",
+						ID:                         "INLINE_SCRIPT_DETECTED",
+						Category:                   string(checks.CategoryClientSecurity),
+						Severity:                   report.SeverityMedium,
+						Title:                      msg.Title,
+						Message:                    msg.Message,
+						Fix:                        msg.Fix,
+						IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 					})
 				}
 			}

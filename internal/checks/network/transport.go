@@ -7,13 +7,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MOYARU/PRS/internal/checks"
-	"github.com/MOYARU/PRS/internal/engine"
-	"github.com/MOYARU/PRS/internal/report"
+	"github.com/MOYARU/PRS-project/internal/checks"
+	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context" // New import with alias
+	"github.com/MOYARU/PRS-project/internal/engine"
+	msges "github.com/MOYARU/PRS-project/internal/messages" // New import for messages
+	"github.com/MOYARU/PRS-project/internal/report"
 )
 
 // CheckTransportSecurity performs checks related to HTTPS usage and forced redirects.
-func CheckTransportSecurity(ctx *checks.Context) ([]report.Finding, error) {
+func CheckTransportSecurity(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	if ctx.InitialURL == nil {
 		return nil, nil
 	}
@@ -21,35 +23,38 @@ func CheckTransportSecurity(ctx *checks.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 
 	if ctx.InitialURL.Scheme != "https" {
+		msg := msges.GetMessage("HTTPS_NOT_USED")
 		findings = append(findings, report.Finding{
 			ID:       "HTTPS_NOT_USED",
 			Category: string(checks.CategoryNetwork),
 			Severity: report.SeverityHigh,
-			Title:    "HTTPS 미사용",
-			Message:  "HTTPS가 사용되지 않아 전송 구간에서 데이터 노출 위험이 있습니다",
-			Fix:      "HTTPS를 사용하도록 TLS 인증서를 적용하세요",
+			Title:    msg.Title,
+			Message:  msg.Message,
+			Fix:      msg.Fix,
 		})
 	}
 
 	if ctx.InitialURL.Scheme == "http" && !ctx.RedirectedToHTTPS {
+		msg := msges.GetMessage("HTTP_TO_HTTPS_REDIRECT_MISSING")
 		findings = append(findings, report.Finding{
 			ID:       "HTTP_TO_HTTPS_REDIRECT_MISSING",
 			Category: string(checks.CategoryNetwork),
 			Severity: report.SeverityHigh,
-			Title:    "HTTP → HTTPS 강제 리다이렉트 미설정",
-			Message:  "HTTP 요청이 HTTPS로 강제 전환되지 않습니다",
-			Fix:      "HTTP 요청을 HTTPS로 301/308 리다이렉트하세요",
+			Title:    msg.Title,
+			Message:  msg.Message,
+			Fix:      msg.Fix,
 		})
 	}
 
 	if ctx.FinalURL != nil && ctx.FinalURL.Scheme == "http" && ctx.InitialURL.Scheme == "https" {
+		msg := msges.GetMessage("HTTPS_DOWNGRADE")
 		findings = append(findings, report.Finding{
 			ID:       "HTTPS_DOWNGRADE",
 			Category: string(checks.CategoryNetwork),
 			Severity: report.SeverityHigh,
-			Title:    "HTTPS 다운그레이드 감지",
-			Message:  "HTTPS 요청이 HTTP로 다운그레이드되었습니다",
-			Fix:      "HTTPS에서 HTTP로 리다이렉트하지 않도록 구성하세요",
+			Title:    msg.Title,
+			Message:  msg.Message,
+			Fix:      msg.Fix,
 		})
 	}
 
@@ -65,7 +70,7 @@ var weakCiphers = map[uint16]string{
 }
 
 // CheckTLSConfiguration performs various checks on the TLS/SSL configuration.
-func CheckTLSConfiguration(ctx *checks.Context) ([]report.Finding, error) {
+func CheckTLSConfiguration(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 
 	// If no TLS connection was established, we cannot perform these checks.
@@ -107,15 +112,16 @@ func CheckTLSConfiguration(ctx *checks.Context) ([]report.Finding, error) {
 			// For now, we assume if an error occurs, this version is not successfully negotiated.
 			continue
 		}
-		
+
 		if tempResult.Response != nil && tempResult.Response.TLS != nil && tempResult.Response.TLS.Version == minVersion {
+			msg := msges.GetMessage("TLS_VERSION_SUPPORTED_V") // ID without %d
 			findings = append(findings, report.Finding{
 				ID:       fmt.Sprintf("TLS_VERSION_SUPPORTED_V%d", minVersion),
 				Category: string(checks.CategoryNetwork),
 				Severity: report.SeverityHigh,
-				Title:    fmt.Sprintf("TLS %s 지원", tlsVersionToString(minVersion)),
-				Message:  fmt.Sprintf("대상 서버가 더 이상 사용되지 않는 안전하지 않은 TLS %s 프로토콜을 지원합니다.", tlsVersionToString(minVersion)),
-				Fix:      "서버에서 TLS 1.2 이하 버전 지원을 비활성화하고 TLS 1.2 이상 버전만 사용하도록 설정하십시오.",
+				Title:    fmt.Sprintf(msg.Title, tlsVersionToString(minVersion)),
+				Message:  fmt.Sprintf(msg.Message, tlsVersionToString(minVersion)),
+				Fix:      msg.Fix,
 			})
 		}
 		if tempResult.Response != nil {
@@ -125,36 +131,39 @@ func CheckTLSConfiguration(ctx *checks.Context) ([]report.Finding, error) {
 
 	// If the connection was established using TLS 1.0 or 1.1 with the main fetch (unlikely due to client config)
 	if connState.Version < tls.VersionTLS12 {
+		msg := msges.GetMessage("TLS_VERSION_DETECTED_V") // ID without %d
 		findings = append(findings, report.Finding{
 			ID:       fmt.Sprintf("TLS_VERSION_DETECTED_V%d", connState.Version),
 			Category: string(checks.CategoryNetwork),
 			Severity: report.SeverityHigh,
-			Title:    fmt.Sprintf("취약한 TLS %s 사용", tlsVersionToString(connState.Version)),
-			Message:  fmt.Sprintf("대상 서버가 취약한 TLS %s 프로토콜을 사용하여 연결을 설정했습니다.", tlsVersionToString(connState.Version)),
-			Fix:      "서버에서 TLS 1.2 이하 버전 지원을 비활성화하고 TLS 1.2 이상 버전만 사용하도록 설정하십시오.",
+			Title:    fmt.Sprintf(msg.Title, tlsVersionToString(connState.Version)),
+			Message:  fmt.Sprintf(msg.Message, tlsVersionToString(connState.Version)),
+			Fix:      msg.Fix,
 		})
 	}
 
 	// --- Check Weak Cipher Suite ---
 	cipherName := tls.CipherSuiteName(connState.CipherSuite)
 	if reason, ok := weakCiphers[connState.CipherSuite]; ok {
+		msg := msges.GetMessage("WEAK_CIPHER_SUITE")
 		findings = append(findings, report.Finding{
 			ID:       "WEAK_CIPHER_SUITE",
 			Category: string(checks.CategoryNetwork),
 			Severity: report.SeverityHigh,
-			Title:    "약한 Cipher Suite 사용",
-			Message:  fmt.Sprintf("대상 서버가 약한 암호 스위트 '%s'를 사용합니다. 이유: %s", cipherName, reason),
-			Fix:      "서버에서 약한 암호 스위트를 비활성화하고 강력한 Forward Secrecy를 제공하는 암호 스위트(예: AES-GCM, ChaCha20-Poly1305 기반의 ECDHE/DHE)만 사용하도록 설정하십시오.",
+			Title:    msg.Title,
+			Message:  fmt.Sprintf(msg.Message, cipherName, reason),
+			Fix:      msg.Fix,
 		})
 	} else if connState.Version == tls.VersionTLS12 && !isForwardSecret(connState.CipherSuite) {
 		// For TLS 1.2, recommend Forward Secrecy if not already present
+		msg := msges.GetMessage("NO_FORWARD_SECRECY_TLS12")
 		findings = append(findings, report.Finding{
 			ID:       "NO_FORWARD_SECRECY_TLS12",
 			Category: string(checks.CategoryNetwork),
 			Severity: report.SeverityMedium,
-			Title:    "Forward Secrecy 미적용 (TLS 1.2)",
-			Message:  fmt.Sprintf("TLS 1.2를 사용하지만, 현재 암호 스위트 '%s'는 Forward Secrecy를 제공하지 않을 수 있습니다.", cipherName),
-			Fix:      "서버에서 ECDHE 또는 DHE 기반의 강력한 Forward Secrecy를 제공하는 암호 스위트(예: AES-GCM, ChaCha20-Poly1305 기반)만 사용하도록 설정하십시오.",
+			Title:    msg.Title,
+			Message:  fmt.Sprintf(msg.Message, cipherName),
+			Fix:      msg.Fix,
 		})
 	}
 
@@ -164,46 +173,50 @@ func CheckTLSConfiguration(ctx *checks.Context) ([]report.Finding, error) {
 
 		// Certificate Expiration
 		if currentTime.After(leafCert.NotAfter) {
+			msg := msges.GetMessage("CERTIFICATE_EXPIRED")
 			findings = append(findings, report.Finding{
 				ID:       "CERTIFICATE_EXPIRED",
 				Category: string(checks.CategoryNetwork),
 				Severity: report.SeverityHigh,
-				Title:    "인증서 만료",
-				Message:  fmt.Sprintf("TLS 인증서가 %s에 만료되었습니다.", leafCert.NotAfter.Format("2006-01-02")),
-				Fix:      "만료된 TLS 인증서를 갱신하십시오.",
+				Title:    msg.Title,
+				Message:  fmt.Sprintf(msg.Message, leafCert.NotAfter.Format("2006-01-02")),
+				Fix:      msg.Fix,
 			})
 		} else if currentTime.AddDate(0, 1, 0).After(leafCert.NotAfter) { // Expires within 1 month
+			msg := msges.GetMessage("CERTIFICATE_EXPIRING_SOON")
 			findings = append(findings, report.Finding{
 				ID:       "CERTIFICATE_EXPIRING_SOON",
 				Category: string(checks.CategoryNetwork),
 				Severity: report.SeverityMedium,
-				Title:    "인증서 만료 임박",
-				Message:  fmt.Sprintf("TLS 인증서가 한 달 이내인 %s에 만료될 예정입니다.", leafCert.NotAfter.Format("2006-01-02")),
-				Fix:      "TLS 인증서 갱신을 계획하십시오.",
+				Title:    msg.Title,
+				Message:  fmt.Sprintf(msg.Message, leafCert.NotAfter.Format("2006-01-02")),
+				Fix:      msg.Fix,
 			})
 		}
 
 		// CN / SAN Mismatch
 		if err := leafCert.VerifyHostname(targetHost); err != nil {
+			msg := msges.GetMessage("CERTIFICATE_HOSTNAME_MISMATCH")
 			findings = append(findings, report.Finding{
 				ID:       "CERTIFICATE_HOSTNAME_MISMATCH",
 				Category: string(checks.CategoryNetwork),
 				Severity: report.SeverityHigh,
-				Title:    "인증서 호스트네임 불일치",
-				Message:  fmt.Sprintf("TLS 인증서의 CN/SAN 필드가 대상 호스트 '%s'와 일치하지 않습니다. 오류: %s", targetHost, err.Error()),
-				Fix:      "인증서의 Common Name (CN) 또는 Subject Alternative Name (SAN) 필드가 대상 도메인과 정확히 일치하는 유효한 TLS 인증서를 사용하십시오.",
+				Title:    msg.Title,
+				Message:  fmt.Sprintf(msg.Message, targetHost, err.Error()),
+				Fix:      msg.Fix,
 			})
 		}
 
 		// OCSP Stapling
 		if len(connState.OCSPResponse) == 0 {
+			msg := msges.GetMessage("OCSP_STAPLING_NOT_USED")
 			findings = append(findings, report.Finding{
 				ID:       "OCSP_STAPLING_NOT_USED",
 				Category: string(checks.CategoryNetwork),
 				Severity: report.SeverityLow,
-				Title:    "OCSP Stapling 미사용",
-				Message:  "OCSP Stapling이 활성화되지 않아 클라이언트가 인증서 해지 상태를 확인하는 데 추가 요청이 필요할 수 있습니다.",
-				Fix:      "서버에서 OCSP Stapling을 활성화하여 클라이언트의 TLS 핸드셰이크 성능을 향상시키고 개인 정보 보호를 강화하십시오.",
+				Title:    msg.Title,
+				Message:  msg.Message,
+				Fix:      msg.Fix,
 			})
 		}
 	}

@@ -1,17 +1,20 @@
 package headers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
-	"github.com/MOYARU/PRS/internal/checks"
-	"github.com/MOYARU/PRS/internal/report"
+	"github.com/MOYARU/PRS-project/internal/checks"
+	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context" // New import with alias
+	msges "github.com/MOYARU/PRS-project/internal/messages"        // New import for messages
+	"github.com/MOYARU/PRS-project/internal/report"
 )
 
 const hstsMaxAgeBaseline = 31536000
 
-func CheckSecurityHeaders(ctx *checks.Context) ([]report.Finding, error) {
+func CheckSecurityHeaders(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	if ctx.Response == nil {
 		return nil, nil
 	}
@@ -19,61 +22,14 @@ func CheckSecurityHeaders(ctx *checks.Context) ([]report.Finding, error) {
 	headers := ctx.Response.Header
 	var findings []report.Finding
 
-	findings = append(findings, missingHeader("Content-Security-Policy",
-		report.SeverityMedium,
-		"Missing Content-Security-Policy",
-		"XSS 공격 방어 불가",
-		"Content-Security-Policy: default-src 'self';",
-		headers)...)
-
-	findings = append(findings, missingHeader("X-Frame-Options",
-		report.SeverityLow,
-		"Missing X-Frame-Options",
-		"Clickjacking 공격 가능",
-		"X-Frame-Options: DENY",
-		headers)...)
-
-	findings = append(findings, missingHeader("X-Content-Type-Options",
-		report.SeverityLow,
-		"Missing X-Content-Type-Options",
-		"MIME 타입 스니핑 방어 불가",
-		"X-Content-Type-Options: nosniff",
-		headers)...)
-
-	findings = append(findings, missingHeader("Referrer-Policy",
-		report.SeverityLow,
-		"Missing Referrer-Policy",
-		"Referrer 정보 과다 노출 가능",
-		"Referrer-Policy: strict-origin-when-cross-origin",
-		headers)...)
-
-	findings = append(findings, missingHeader("Permissions-Policy",
-		report.SeverityLow,
-		"Missing Permissions-Policy",
-		"브라우저 기능 제어 미흡",
-		"Permissions-Policy: geolocation=()",
-		headers)...)
-
-	findings = append(findings, missingHeader("Cross-Origin-Opener-Policy",
-		report.SeverityLow,
-		"Missing Cross-Origin-Opener-Policy",
-		"탭 격리 보호 미흡",
-		"Cross-Origin-Opener-Policy: same-origin",
-		headers)...)
-
-	findings = append(findings, missingHeader("Cross-Origin-Embedder-Policy",
-		report.SeverityLow,
-		"Missing Cross-Origin-Embedder-Policy",
-		"격리된 컨텍스트 보호 미흡",
-		"Cross-Origin-Embedder-Policy: require-corp",
-		headers)...)
-
-	findings = append(findings, missingHeader("Cross-Origin-Resource-Policy",
-		report.SeverityLow,
-		"Missing Cross-Origin-Resource-Policy",
-		"리소스 공유 정책 미설정",
-		"Cross-Origin-Resource-Policy: same-site",
-		headers)...)
+	findings = append(findings, missingHeader(headers, "CONTENT_SECURITY_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityMedium)...)
+	findings = append(findings, missingHeader(headers, "X_FRAME_OPTIONS_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
+	findings = append(findings, missingHeader(headers, "X_CONTENT_TYPE_OPTIONS_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
+	findings = append(findings, missingHeader(headers, "REFERRER_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
+	findings = append(findings, missingHeader(headers, "PERMISSIONS_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
+	findings = append(findings, missingHeader(headers, "CROSS_ORIGIN_OPENER_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
+	findings = append(findings, missingHeader(headers, "CROSS_ORIGIN_EMBEDDER_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
+	findings = append(findings, missingHeader(headers, "CROSS_ORIGIN_RESOURCE_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
 
 	findings = append(findings, checkHSTS(ctx, headers)...)
 	findings = append(findings, checkCookieFlags(ctx.Response)...)
@@ -82,51 +38,70 @@ func CheckSecurityHeaders(ctx *checks.Context) ([]report.Finding, error) {
 	return findings, nil
 }
 
-func missingHeader(name string, severity report.Severity, title, message, fix string, headers http.Header) []report.Finding {
-	if headers.Get(name) != "" {
+// missingHeader checks for a missing header and returns a finding if it's absent.
+// It now takes the message ID as a parameter.
+func missingHeader(headers http.Header, msgID string, category checks.Category, severity report.Severity) []report.Finding {
+	// Derive the actual header name from the message ID for checking presence.
+	// This is a heuristic and might need refinement if IDs don't directly map to header names.
+	// For example, "CONTENT_SECURITY_POLICY_MISSING" -> "Content-Security-Policy"
+	headerName := strings.ReplaceAll(strings.ToLower(msgID), "_MISSING", "")
+	headerName = strings.ReplaceAll(headerName, "_", "-")
+	headerName = strings.Replace(headerName, "content-security-policy", "Content-Security-Policy", 1) // Specific capitalization
+	headerName = strings.Replace(headerName, "x-frame-options", "X-Frame-Options", 1)
+	headerName = strings.Replace(headerName, "x-content-type-options", "X-Content-Type-Options", 1)
+	headerName = strings.Replace(headerName, "referrer-policy", "Referrer-Policy", 1)
+	headerName = strings.Replace(headerName, "permissions-policy", "Permissions-Policy", 1)
+	headerName = strings.Replace(headerName, "cross-origin-opener-policy", "Cross-Origin-Opener-Policy", 1)
+	headerName = strings.Replace(headerName, "cross-origin-embedder-policy", "Cross-Origin-Embedder-Policy", 1)
+	headerName = strings.Replace(headerName, "cross-origin-resource-policy", "Cross-Origin-Resource-Policy", 1)
+
+	if headers.Get(headerName) != "" {
 		return nil
 	}
+	msg := msges.GetMessage(msgID)
 	return []report.Finding{
 		{
-			ID:       strings.ToUpper(strings.ReplaceAll(name, "-", "_")) + "_MISSING",
-			Category: string(checks.CategorySecurityHeaders),
+			ID:       msgID,
+			Category: string(category),
 			Severity: severity,
-			Title:    title,
-			Message:  message,
-			Fix:      fix,
+			Title:    msg.Title,
+			Message:  msg.Message,
+			Fix:      msg.Fix,
 		},
 	}
 }
 
-func checkHSTS(ctx *checks.Context, headers http.Header) []report.Finding {
+func checkHSTS(ctx *ctxpkg.Context, headers http.Header) []report.Finding {
 	if ctx.FinalURL == nil || ctx.FinalURL.Scheme != "https" {
 		return nil
 	}
 
 	hsts := headers.Get("Strict-Transport-Security")
 	if hsts == "" {
+		msg := msges.GetMessage("HSTS_MISSING")
 		return []report.Finding{
 			{
 				ID:       "HSTS_MISSING",
 				Category: string(checks.CategorySecurityHeaders),
 				Severity: report.SeverityHigh,
-				Title:    "Missing Strict-Transport-Security",
-				Message:  "HTTPS 연결 강제 및 다운그레이드 방어 미흡",
-				Fix:      "Strict-Transport-Security: max-age=31536000; includeSubDomains; preload",
+				Title:    msg.Title,
+				Message:  msg.Message,
+				Fix:      msg.Fix,
 			},
 		}
 	}
 
 	maxAge := parseHSTSMaxAge(hsts)
 	if maxAge > 0 && maxAge < hstsMaxAgeBaseline {
+		msg := msges.GetMessage("HSTS_MAXAGE_LOW")
 		return []report.Finding{
 			{
 				ID:       "HSTS_MAXAGE_LOW",
 				Category: string(checks.CategorySecurityHeaders),
 				Severity: report.SeverityMedium,
-				Title:    "HSTS max-age too low",
-				Message:  "HSTS max-age 값이 낮아 보호 기간이 부족합니다",
-				Fix:      "Strict-Transport-Security: max-age=31536000; includeSubDomains; preload",
+				Title:    msg.Title,
+				Message:  msg.Message,
+				Fix:      msg.Fix,
 			},
 		}
 	}
@@ -182,46 +157,50 @@ func checkCookieFlags(resp *http.Response) []report.Finding {
 	var findings []report.Finding
 
 	if len(insecureCookies) > 0 {
+		msg := msges.GetMessage("COOKIE_SECURE_MISSING")
 		findings = append(findings, report.Finding{
 			ID:       "COOKIE_SECURE_MISSING",
 			Category: string(checks.CategoryAuthSession),
 			Severity: report.SeverityMedium,
-			Title:    "Cookie Secure flag missing",
-			Message:  "Secure 플래그가 없는 쿠키가 있습니다: " + strings.Join(insecureCookies, ", "),
-			Fix:      "Set-Cookie에 Secure 플래그를 추가하세요",
+			Title:    msg.Title,
+			Message:  fmt.Sprintf(msg.Message, strings.Join(insecureCookies, ", ")),
+			Fix:      msg.Fix,
 		})
 	}
 
 	if len(httpOnlyMissing) > 0 {
+		msg := msges.GetMessage("COOKIE_HTTPONLY_MISSING")
 		findings = append(findings, report.Finding{
 			ID:       "COOKIE_HTTPONLY_MISSING",
 			Category: string(checks.CategoryAuthSession),
 			Severity: report.SeverityMedium,
-			Title:    "Cookie HttpOnly flag missing",
-			Message:  "HttpOnly 플래그가 없는 쿠키가 있습니다: " + strings.Join(httpOnlyMissing, ", "),
-			Fix:      "Set-Cookie에 HttpOnly 플래그를 추가하세요",
+			Title:    msg.Title,
+			Message:  fmt.Sprintf(msg.Message, strings.Join(httpOnlyMissing, ", ")),
+			Fix:      msg.Fix,
 		})
 	}
 
 	if len(sameSiteMissing) > 0 {
+		msg := msges.GetMessage("COOKIE_SAMESITE_MISSING")
 		findings = append(findings, report.Finding{
 			ID:       "COOKIE_SAMESITE_MISSING",
 			Category: string(checks.CategoryAuthSession),
 			Severity: report.SeverityLow,
-			Title:    "Cookie SameSite not set",
-			Message:  "SameSite 미설정 쿠키가 있습니다: " + strings.Join(sameSiteMissing, ", "),
-			Fix:      "Set-Cookie에 SameSite=Lax 또는 Strict를 추가하세요",
+			Title:    msg.Title,
+			Message:  fmt.Sprintf(msg.Message, strings.Join(sameSiteMissing, ", ")),
+			Fix:      msg.Fix,
 		})
 	}
 
 	if len(sameSiteNoneInsecure) > 0 {
+		msg := msges.GetMessage("COOKIE_SAMESITE_NONE_INSECURE")
 		findings = append(findings, report.Finding{
 			ID:       "COOKIE_SAMESITE_NONE_INSECURE",
 			Category: string(checks.CategoryAuthSession),
 			Severity: report.SeverityMedium,
-			Title:    "SameSite=None without Secure",
-			Message:  "SameSite=None이지만 Secure 플래그가 없는 쿠키가 있습니다: " + strings.Join(sameSiteNoneInsecure, ", "),
-			Fix:      "SameSite=None 사용 시 Secure 플래그를 함께 설정하세요",
+			Title:    msg.Title,
+			Message:  fmt.Sprintf(msg.Message, strings.Join(sameSiteNoneInsecure, ", ")),
+			Fix:      msg.Fix,
 		})
 	}
 
@@ -232,24 +211,26 @@ func checkInfoHeaders(headers http.Header) []report.Finding {
 	var findings []report.Finding
 
 	if server := headers.Get("Server"); server != "" {
+		msg := msges.GetMessage("SERVER_HEADER_EXPOSED")
 		findings = append(findings, report.Finding{
 			ID:       "SERVER_HEADER_EXPOSED",
 			Category: string(checks.CategoryInfrastructure),
 			Severity: report.SeverityInfo,
-			Title:    "Server header exposed",
-			Message:  "서버 정보 노출",
-			Fix:      "Server 헤더 제거 또는 최소화",
+			Title:    msg.Title,
+			Message:  msg.Message,
+			Fix:      msg.Fix,
 		})
 	}
 
 	if poweredBy := headers.Get("X-Powered-By"); poweredBy != "" {
+		msg := msges.GetMessage("X_POWERED_BY_EXPOSED")
 		findings = append(findings, report.Finding{
 			ID:       "X_POWERED_BY_EXPOSED",
 			Category: string(checks.CategoryInfrastructure),
 			Severity: report.SeverityInfo,
-			Title:    "X-Powered-By header exposed",
-			Message:  "프레임워크 또는 런타임 정보 노출",
-			Fix:      "X-Powered-By 헤더 제거 또는 최소화",
+			Title:    msg.Title,
+			Message:  msg.Message,
+			Fix:      msg.Fix,
 		})
 	}
 

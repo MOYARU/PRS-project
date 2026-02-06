@@ -6,47 +6,66 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/MOYARU/PRS/internal/checks"
-	"github.com/MOYARU/PRS/internal/engine"
-	"github.com/MOYARU/PRS/internal/report"
+	"github.com/MOYARU/PRS-project/internal/checks"
+	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context" // New import with alias
+	"github.com/MOYARU/PRS-project/internal/engine"
+	msges "github.com/MOYARU/PRS-project/internal/messages" // New import for messages
+	"github.com/MOYARU/PRS-project/internal/report"
 )
 
-// CheckAuthSessionConfiguration performs various checks related to authentication and session management.
-func CheckAuthSessionConfiguration(ctx *checks.Context) ([]report.Finding, error) {
+// CheckAuthSessionHardening performs various checks related to authentication and session management hardening.
+// This includes cookie attributes like Secure, HttpOnly, SameSite, and expiration.
+func CheckAuthSessionHardening(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 
-	// Placeholder for finding login page URL. For now, assume it's /login or similar.
-	// In a real scenario, this would involve spidering or user input.
-	loginPageURL := findLoginPage(ctx.InitialURL.String()) // This needs to be a real function
-
+	// Check for login page HTTPS, which was part of the original AUTH_SESSION_CONFIGURATION
+	loginPageURL := findLoginPage(ctx.InitialURL.String())
 	if loginPageURL != "" {
-		// 로그인 페이지 HTTPS 미사용
 		findings = append(findings, checkLoginPageHTTPS(ctx, loginPageURL)...)
 	}
 
-	// 세션 쿠키 만료 없음
-	findings = append(findings, checkSessionCookieExpiration(ctx.Response)...)
+	// Check session cookie attributes and expiration
+	findings = append(findings, checkCookieAttributes(ctx.Response)...)
 
-	// URL에 세션 노출 - This is hard to detect passively from a single response, requires analysis of subsequent requests.
-	// Placeholder for now.
+	return findings, nil
+}
 
-	// 로그아웃 후 세션 유지 가능성 - Requires simulating login/logout.
-	// Placeholder for now.
+// CheckSessionManagement performs active checks related to session management, like re-issuance.
+// This check is highly dependent on the ability to perform authenticated requests.
+func CheckSessionManagement(ctx *ctxpkg.Context) ([]report.Finding, error) {
+	var findings []report.Finding
 
-	// 인증 실패 시 동일한 응답 여부 (계정 존재 노출) - Requires trying valid/invalid usernames.
-	// Placeholder for now.
+	if ctx.Mode != ctxpkg.Active {
+		return findings, nil // Session Management typically requires active testing (login simulation)
+	}
 
-	// 다중 인증(MFA) 부재 (Info) - Not detectable passively without specific knowledge.
-	// Placeholder for now.
+	// Actual implementation for 'Set-Cookie identical before/after login' and 'No session re-issuance'
+	// would require:
+	// 1. Identifying login endpoints (already have findLoginPage, but need more robust detection).
+	// 2. Having a mechanism to provide credentials and perform login.
+	// 3. Capturing pre-login cookies.
+	// 4. Performing login and capturing post-login cookies.
+	// 5. Comparing session IDs/cookies to detect re-issuance or changes.
 
-	// 기본 계정 존재 가능성 - Requires trying common default credentials.
-	// Placeholder for now.
+	// This is a complex active check. For now, it remains a placeholder encouraging manual review or
+	// a note for future advanced active scanning features.
+	msg := msges.GetMessage("SESSION_MANAGEMENT_MANUAL_REVIEW_NEEDED")
+	findings = append(findings, report.Finding{
+		ID:                         "SESSION_MANAGEMENT_MANUAL_REVIEW_NEEDED",
+		Category:                   string(checks.CategoryAuthSession),
+		Severity:                   report.SeverityInfo,
+		Confidence:                 report.ConfidenceLow,
+		Title:                      msg.Title,
+		Message:                    msg.Message,
+		Fix:                        msg.Fix,
+		IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
+	})
 
 	return findings, nil
 }
 
 // findLoginPage attempts to find a login page URL.
-// This is a simplified placeholder. A real implementation would involve:
+// This is a simplified placeholder; a real implementation would involve:
 // - Analyzing HTML for links like /login, /signin, /account
 // - Checking common login path patterns
 // - Potentially using a wordlist
@@ -72,7 +91,7 @@ func findLoginPage(targetURL string) string {
 }
 
 // checkLoginPageHTTPS checks if the login page is not using HTTPS.
-func checkLoginPageHTTPS(ctx *checks.Context, loginPageURL string) []report.Finding {
+func checkLoginPageHTTPS(ctx *ctxpkg.Context, loginPageURL string) []report.Finding {
 	var findings []report.Finding
 	u, err := url.Parse(loginPageURL)
 	if err != nil {
@@ -80,20 +99,22 @@ func checkLoginPageHTTPS(ctx *checks.Context, loginPageURL string) []report.Find
 	}
 
 	if u.Scheme != "https" {
+		msg := msges.GetMessage("LOGIN_PAGE_HTTPS_MISSING")
 		findings = append(findings, report.Finding{
-			ID:       "LOGIN_PAGE_HTTPS_MISSING",
-			Category: string(checks.CategoryAuthSession),
-			Severity: report.SeverityHigh,
-			Title:    "로그인 페이지 HTTPS 미사용",
-			Message:  fmt.Sprintf("로그인 페이지 '%s'가 HTTPS를 사용하지 않아 인증 정보가 평문으로 전송될 위험이 있습니다.", loginPageURL),
-			Fix:      "로그인 페이지를 포함한 모든 인증 관련 페이지에 HTTPS를 강제 적용하십시오.",
+			ID:                         "LOGIN_PAGE_HTTPS_MISSING",
+			Category:                   string(checks.CategoryAuthSession),
+			Severity:                   report.SeverityHigh,
+			Title:                      msg.Title,
+			Message:                    fmt.Sprintf(msg.Message, loginPageURL),
+			Fix:                        msg.Fix,
+			IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 		})
 	}
 	return findings
 }
 
-// checkSessionCookieExpiration checks for session cookies that do not have an expiration.
-func checkSessionCookieExpiration(resp *http.Response) []report.Finding {
+// checkCookieAttributes checks for Secure, HttpOnly, SameSite=None + Secure, and session cookie expiration.
+func checkCookieAttributes(resp *http.Response) []report.Finding {
 	if resp == nil {
 		return nil
 	}
@@ -104,19 +125,79 @@ func checkSessionCookieExpiration(resp *http.Response) []report.Finding {
 	for _, cookie := range cookies {
 		// Heuristic: identify potential session cookies.
 		// This is a simplification; a more robust check would involve common session cookie names.
-		isSessionCookie := strings.Contains(strings.ToLower(cookie.Name), "session") ||
+		// Or if there's no specific session cookie, any cookie without these flags is a risk.
+		isPotentiallySessionRelated := strings.Contains(strings.ToLower(cookie.Name), "session") ||
 			strings.Contains(strings.ToLower(cookie.Name), "jsessionid") ||
 			strings.Contains(strings.ToLower(cookie.Name), "phpsessid") ||
-			strings.Contains(strings.ToLower(cookie.Name), "aspsessionid")
+			strings.Contains(strings.ToLower(cookie.Name), "aspsessionid") ||
+			strings.Contains(strings.ToLower(cookie.Name), "auth") ||
+			strings.Contains(strings.ToLower(cookie.Name), "id")
 
-		if isSessionCookie && cookie.Expires.IsZero() {
+		// Secure Flag
+		if !cookie.Secure && strings.HasPrefix(strings.ToLower(resp.Request.URL.Scheme), "https") {
+			msg := msges.GetMessage("COOKIE_SECURE_FLAG_MISSING")
 			findings = append(findings, report.Finding{
-				ID:       "SESSION_COOKIE_NO_EXPIRATION",
-				Category: string(checks.CategoryAuthSession),
-				Severity: report.SeverityMedium,
-				Title:    "세션 쿠키 만료 없음",
-				Message:  fmt.Sprintf("세션 쿠키 '%s'가 만료 시간을 설정하지 않아, 장기간 브라우저에 남아있을 수 있습니다.", cookie.Name),
-				Fix:      "세션 쿠키에 적절한 만료 시간(Expires 또는 Max-Age)을 설정하여 세션 하이재킹 위험을 줄이십시오.",
+				ID:                         "COOKIE_SECURE_FLAG_MISSING",
+				Category:                   string(checks.CategoryAuthSession),
+				Severity:                   report.SeverityMedium,
+				Title:                      msg.Title,
+				Message:                    fmt.Sprintf(msg.Message, cookie.Name),
+				Fix:                        msg.Fix,
+				IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
+			})
+		}
+
+		// HttpOnly Flag
+		if !cookie.HttpOnly {
+			msg := msges.GetMessage("COOKIE_HTTPONLY_FLAG_MISSING")
+			findings = append(findings, report.Finding{
+				ID:                         "COOKIE_HTTPONLY_FLAG_MISSING",
+				Category:                   string(checks.CategoryAuthSession),
+				Severity:                   report.SeverityMedium,
+				Title:                      msg.Title,
+				Message:                    fmt.Sprintf(msg.Message, cookie.Name),
+				Fix:                        msg.Fix,
+				IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
+			})
+		}
+
+		// Session Cookie Expiration
+		if isPotentiallySessionRelated && cookie.Expires.IsZero() {
+			msg := msges.GetMessage("SESSION_COOKIE_NO_EXPIRATION")
+			findings = append(findings, report.Finding{
+				ID:                         "SESSION_COOKIE_NO_EXPIRATION",
+				Category:                   string(checks.CategoryAuthSession),
+				Severity:                   report.SeverityMedium,
+				Title:                      msg.Title,
+				Message:                    fmt.Sprintf(msg.Message, cookie.Name),
+				Fix:                        msg.Fix,
+				IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
+			})
+		}
+	}
+
+	// Check SameSite=None without Secure separately by inspecting raw headers
+	// This avoids O(N*M) complexity and incorrect attribution in the loop above.
+	for _, setCookieHeader := range resp.Header["Set-Cookie"] {
+		if strings.Contains(setCookieHeader, "SameSite=None") && !strings.Contains(setCookieHeader, "Secure") {
+			// Try to extract cookie name for better reporting
+			cookieName := "Unknown"
+			parts := strings.Split(setCookieHeader, ";")
+			if len(parts) > 0 {
+				kv := strings.SplitN(parts[0], "=", 2)
+				if len(kv) > 0 {
+					cookieName = strings.TrimSpace(kv[0])
+				}
+			}
+			msg := msges.GetMessage("SAMESITE_NONE_SECURE_MISSING")
+			findings = append(findings, report.Finding{
+				ID:                         "SAMESITE_NONE_SECURE_MISSING",
+				Category:                   string(checks.CategoryAuthSession),
+				Severity:                   report.SeverityHigh,
+				Title:                      msg.Title,
+				Message:                    fmt.Sprintf(msg.Message, cookieName),
+				Fix:                        msg.Fix,
+				IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 			})
 		}
 	}

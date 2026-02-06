@@ -1,9 +1,12 @@
 /*
-Copyright © 2026 NAME HERE <EMAIL ADDRESS>
+Copyright © 2026 モヤル <rbffo@icloud.com>
 */
+
 package main
 
-import "github.com/MOYARU/PRS/cmd"
+import (
+	"github.com/MOYARU/PRS-project/cmd"
+)
 
 func main() {
 	cmd.Execute()
