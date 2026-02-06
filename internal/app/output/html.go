@@ -6,10 +6,11 @@ import (
 	"os"
 	"time"
 
+	msges "github.com/MOYARU/PRS-project/internal/messages"
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
-// HTMLReportData holds data for the HTML template.
+// HTML report
 type HTMLReportData struct {
 	Target      string
 	ScannedURLs []string
@@ -21,9 +22,23 @@ type HTMLReportData struct {
 	LowCount    int
 	InfoCount   int
 	Findings    []report.Finding
+
+	UITitle              string
+	UITarget             string
+	UIScanTime           string
+	UIDuration           string
+	UIHigh               string
+	UIMedium             string
+	UILow                string
+	UIInfo               string
+	UICrawledScope       string
+	UIFindings           string
+	UIRecommendation     string
+	UIChartTitle         string
+	UIManualVerification string
 }
 
-// SaveHTMLReport generates an HTML report file.
+// SaveHTML report generates and saves an HTML report to a file.
 func SaveHTMLReport(target string, scannedURLs []string, findings []report.Finding, startTime, endTime time.Time) error {
 	filename := fmt.Sprintf("prs_report_%s.html", time.Now().Format("20060102_150405"))
 
@@ -33,12 +48,35 @@ func SaveHTMLReport(target string, scannedURLs []string, findings []report.Findi
 	}
 	defer f.Close()
 
+	// Localize UI strings
+	for i := range findings {
+		msg := msges.GetMessage(findings[i].ID)
+		if msg.Title != "Message Not Found" {
+			findings[i].Title = msg.Title
+			findings[i].Message = msg.Message
+			findings[i].Fix = msg.Fix
+		}
+	}
+
 	data := HTMLReportData{
-		Target:      target,
-		ScannedURLs: scannedURLs,
-		ScanTime:    startTime.Format("2006-01-02 15:04:05"),
-		Duration:    endTime.Sub(startTime).String(),
-		Findings:    findings,
+		Target:               target,
+		ScannedURLs:          scannedURLs,
+		ScanTime:             startTime.Format("2006-01-02 15:04:05"),
+		Duration:             endTime.Sub(startTime).String(),
+		Findings:             findings,
+		UITitle:              msges.GetUIMessage("HTMLReportTitle"),
+		UITarget:             msges.GetUIMessage("HTMLTarget"),
+		UIScanTime:           msges.GetUIMessage("HTMLScanTime"),
+		UIDuration:           msges.GetUIMessage("HTMLDuration"),
+		UIHigh:               msges.GetUIMessage("HTMLHigh"),
+		UIMedium:             msges.GetUIMessage("HTMLMedium"),
+		UILow:                msges.GetUIMessage("HTMLLow"),
+		UIInfo:               msges.GetUIMessage("HTMLInfo"),
+		UICrawledScope:       msges.GetUIMessage("HTMLCrawledScope"),
+		UIFindings:           msges.GetUIMessage("HTMLFindings"),
+		UIRecommendation:     msges.GetUIMessage("HTMLRecommendation"),
+		UIChartTitle:         msges.GetUIMessage("HTMLChartTitle"),
+		UIManualVerification: msges.GetUIMessage("UIManualVerification"),
 	}
 
 	for _, f := range findings {
@@ -64,13 +102,15 @@ func SaveHTMLReport(target string, scannedURLs []string, findings []report.Findi
 	return t.Execute(f, data)
 }
 
+// 알수 없는 버그를 정복했습니다. 아무튼 이제 HTML 보고서가 제대로 생성됩니다.
+
 const htmlTemplate = `
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PRS Security Scan Report - {{.Target}}</title>
+    <title>{{.UITitle}} - {{.Target}}</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max-width: 1200px; margin: 0 auto; padding: 20px; background-color: #f4f4f9; }
@@ -112,18 +152,18 @@ const htmlTemplate = `
 </head>
 <body>
     <div class="header">
-        <h1>PRS Security Scan Report</h1>
-        <p><strong>Target:</strong> {{.Target}}</p>
-        <p><strong>Scan Time:</strong> {{.ScanTime}}</p>
-        <p><strong>Duration:</strong> {{.Duration}}</p>
+        <h1>{{.UITitle}}</h1>
+        <p><strong>{{.UITarget}}:</strong> {{.Target}}</p>
+        <p><strong>{{.UIScanTime}}:</strong> {{.ScanTime}}</p>
+        <p><strong>{{.UIDuration}}:</strong> {{.Duration}}</p>
     </div>
 
     <div class="dashboard">
         <div class="summary-cards">
-            <div class="card high"><h3>{{.HighCount}}</h3><p>High</p></div>
-            <div class="card medium"><h3>{{.MediumCount}}</h3><p>Medium</p></div>
-            <div class="card low"><h3>{{.LowCount}}</h3><p>Low</p></div>
-            <div class="card info"><h3>{{.InfoCount}}</h3><p>Info</p></div>
+            <div class="card high"><h3>{{.HighCount}}</h3><p>{{.UIHigh}}</p></div>
+            <div class="card medium"><h3>{{.MediumCount}}</h3><p>{{.UIMedium}}</p></div>
+            <div class="card low"><h3>{{.LowCount}}</h3><p>{{.UILow}}</p></div>
+            <div class="card info"><h3>{{.InfoCount}}</h3><p>{{.UIInfo}}</p></div>
         </div>
         <div class="chart-container">
             <canvas id="severityChart"></canvas>
@@ -131,7 +171,7 @@ const htmlTemplate = `
     </div>
 
     <div class="scope-container">
-        <h3>Crawled Scope ({{len .ScannedURLs}} URLs)</h3>
+        <h3>{{.UICrawledScope}} ({{len .ScannedURLs}} URLs)</h3>
         <div class="scope-list">
             <ul>
                 {{range .ScannedURLs}}
@@ -141,7 +181,7 @@ const htmlTemplate = `
         </div>
     </div>
 
-    <h2>Findings ({{.TotalIssues}})</h2>
+    <h2>{{.UIFindings}} ({{.TotalIssues}})</h2>
     {{range .Findings}}
     <div class="finding {{.Severity}}">
         <div class="finding-header">
@@ -152,17 +192,17 @@ const htmlTemplate = `
             <p><span class="label">Category:</span> {{.Category}}</p>
             <p><span class="label">Description:</span> {{.Message}}</p>
             <div class="fix-box">
-                <span class="fix-title">Recommendation / Fix</span>
+                <span class="fix-title">Fix: {{$.UIRecommendation}}</span>
                 <div class="fix-content">{{.Fix}}</div>
             </div>
             {{if .IsPotentiallyFalsePositive}}
-            <p style="color: #e67e22;">⚠️ <em>This finding requires manual verification (potential false positive).</em></p>
+            <p style="color: #e67e22;">{{$.UIManualVerification}}</p>
             {{end}}
         </div>
     </div>
     {{else}}
     <div class="finding">
-        <p>No vulnerabilities found.</p>
+        <p>{{.UINoVulns}}</p>
     </div>
     {{end}}
 
@@ -171,7 +211,7 @@ const htmlTemplate = `
         const severityChart = new Chart(ctx, {
             type: 'pie',
             data: {
-                labels: ['High', 'Medium', 'Low', 'Info'],
+                labels: ['{{.UIHigh}}', '{{.UIMedium}}', '{{.UILow}}', '{{.UIInfo}}'],
                 datasets: [{
                     data: [{{.HighCount}}, {{.MediumCount}}, {{.LowCount}}, {{.InfoCount}}],
                     backgroundColor: ['#dc3545', '#ffc107', '#0d6efd', '#6c757d'],
@@ -186,7 +226,7 @@ const htmlTemplate = `
                     },
                     title: {
                         display: true,
-                        text: 'Vulnerability Severity Distribution'
+                        text: '{{.UIChartTitle}}'
                     }
                 }
             }

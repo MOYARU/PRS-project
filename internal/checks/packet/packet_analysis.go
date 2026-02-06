@@ -11,8 +11,6 @@ import (
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
-// CanonicalPacket represents a simplified view of the request/response pair
-// focusing on security-relevant fields.
 type CanonicalPacket struct {
 	ReqAuthorization string
 	ReqCookie        string
@@ -25,24 +23,17 @@ type CanonicalPacket struct {
 	RespCORSCreds    string
 }
 
-// CheckPacketAnomalies analyzes the request and response for protocol anomalies and security misconfigurations.
 func CheckPacketAnomalies(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 
-	// 1. Canonicalization: Extract meaningful fields
 	packet := extractCanonical(ctx)
 
-	// 2. Packet-based Findings
-
-	// Check A: Content-Type Mismatch (Header vs Body Sniffing)
-	// Only check if body is not empty and header is present
 	if len(ctx.BodyBytes) > 0 && packet.RespContentType != "" {
 		detectedType := http.DetectContentType(ctx.BodyBytes)
-		// Simplify detected type (e.g., "text/html; charset=utf-8" -> "text/html")
+
 		simpleDetected := strings.Split(detectedType, ";")[0]
 		simpleHeader := strings.Split(packet.RespContentType, ";")[0]
 
-		// Mismatch logic: e.g., Header says JSON but Body is HTML
 		if simpleHeader == "application/json" && strings.Contains(simpleDetected, "html") {
 			msg := msges.GetMessage("PACKET_CONTENT_TYPE_MISMATCH")
 			findings = append(findings, report.Finding{
@@ -57,8 +48,6 @@ func CheckPacketAnomalies(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		}
 	}
 
-	// Check B: Authorization / Status Code Anomaly
-	// e.g., 200 OK but sends WWW-Authenticate (Confusing state)
 	if ctx.Response.StatusCode == http.StatusOK && packet.RespWWWAuth != "" {
 		msg := msges.GetMessage("PACKET_WWW_AUTHENTICATE_ON_200")
 		findings = append(findings, report.Finding{
@@ -72,7 +61,6 @@ func CheckPacketAnomalies(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		})
 	}
 
-	// Check C: CORS Header Combination
 	if packet.RespCORSOrigin == "*" && packet.RespCORSCreds == "true" {
 		msg := msges.GetMessage("PACKET_CORS_BAD_COMBINATION")
 		findings = append(findings, report.Finding{
@@ -86,8 +74,6 @@ func CheckPacketAnomalies(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		})
 	}
 
-	// Check D: Accept Header Ignored
-	// If request specifically asked for JSON but got HTML
 	if strings.Contains(packet.ReqAccept, "application/json") &&
 		!strings.Contains(packet.ReqAccept, "text/html") && // Ensure it didn't accept HTML too
 		strings.Contains(packet.RespContentType, "text/html") {
@@ -107,11 +93,10 @@ func CheckPacketAnomalies(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	return findings, nil
 }
 
-// extractCanonical extracts relevant security fields from the context.
 func extractCanonical(ctx *ctxpkg.Context) CanonicalPacket {
 	p := CanonicalPacket{}
 
-	// Request Fields (if available)
+	// Request Fields
 	if ctx.Response != nil && ctx.Response.Request != nil {
 		req := ctx.Response.Request
 		p.ReqAuthorization = req.Header.Get("Authorization")

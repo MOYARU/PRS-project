@@ -4,20 +4,20 @@ import (
 	"github.com/MOYARU/PRS-project/internal/checks"
 	"github.com/MOYARU/PRS-project/internal/checks/application"
 	"github.com/MOYARU/PRS-project/internal/checks/authsession"
-	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context" // New import with alias
+	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context"
 	"github.com/MOYARU/PRS-project/internal/checks/headers"
 	"github.com/MOYARU/PRS-project/internal/checks/http"
 	"github.com/MOYARU/PRS-project/internal/checks/network"
 
-	"github.com/MOYARU/PRS-project/internal/checks/api"             // New import
-	"github.com/MOYARU/PRS-project/internal/checks/components"      // New import
-	"github.com/MOYARU/PRS-project/internal/checks/deserialization" // New import
-	"github.com/MOYARU/PRS-project/internal/checks/info"            // New import
-	"github.com/MOYARU/PRS-project/internal/checks/injection"       // New import
-	"github.com/MOYARU/PRS-project/internal/checks/input"           // New import
-	"github.com/MOYARU/PRS-project/internal/checks/packet"          // New import
-	"github.com/MOYARU/PRS-project/internal/checks/ssrf"            // New import
-	"github.com/MOYARU/PRS-project/internal/checks/web"             // New import
+	"github.com/MOYARU/PRS-project/internal/checks/api"
+	"github.com/MOYARU/PRS-project/internal/checks/components"
+	"github.com/MOYARU/PRS-project/internal/checks/deserialization"
+	"github.com/MOYARU/PRS-project/internal/checks/info"
+	"github.com/MOYARU/PRS-project/internal/checks/injection"
+	"github.com/MOYARU/PRS-project/internal/checks/input"
+	"github.com/MOYARU/PRS-project/internal/checks/packet"
+	"github.com/MOYARU/PRS-project/internal/checks/ssrf"
+	"github.com/MOYARU/PRS-project/internal/checks/web"
 )
 
 func DefaultChecks() []checks.Check {
@@ -67,7 +67,7 @@ func DefaultChecks() []checks.Check {
 			Category:    checks.CategoryAuthSession,
 			Title:       "세션 관리 점검",
 			Description: "로그인 전/후 Set-Cookie 동일 여부, 세션 재발급 여부 등을 점검합니다.",
-			Mode:        ctxpkg.Active, // Requires comparing pre/post login, so active.
+			Mode:        ctxpkg.Active,
 			Run:         authsession.CheckSessionManagement,
 		},
 		{
@@ -96,7 +96,7 @@ func DefaultChecks() []checks.Check {
 		},
 		{
 			ID:          "CORS_CONFIGURATION",
-			Category:    checks.CategoryNetwork, // CORS is network related, but could be API as well
+			Category:    checks.CategoryNetwork,
 			Title:       "CORS 설정 오류 점검",
 			Description: "Cross-Origin Resource Sharing (CORS) 설정의 잠재적 보안 취약점을 점검합니다.",
 			Mode:        ctxpkg.Passive,
@@ -107,7 +107,7 @@ func DefaultChecks() []checks.Check {
 			Category:    checks.CategoryInformationLeakage,
 			Title:       "정보 누출 점검",
 			Description: "스택 트레이스, DB 에러 문자열, 프레임워크 시그니처, 디버그/메타 엔드포인트 노출 여부를 점검합니다.",
-			Mode:        ctxpkg.Passive, // Can be active depending on how deep the check goes
+			Mode:        ctxpkg.Passive,
 			Run:         info.CheckInformationLeakage,
 		},
 		{
@@ -147,7 +147,7 @@ func DefaultChecks() []checks.Check {
 			Category:    checks.CategoryFileExposure,
 			Title:       "웹 콘텐츠 및 파일 노출 점검",
 			Description: "민감한 파일 노출 및 웹 콘텐츠 보안(Mixed Content 등)을 점검합니다.",
-			Mode:        ctxpkg.Passive, // Runs in both modes, internal logic handles active probes
+			Mode:        ctxpkg.Passive,
 			Run:         web.CheckWebContentExposure,
 		},
 		{
@@ -182,7 +182,7 @@ func DefaultChecks() []checks.Check {
 			Mode:        ctxpkg.Active,
 			Run:         injection.CheckOSCommandInjection,
 		},
-		// TODO: Stored XSS, DOM XSS, NoSQL, LDAP injection checks will be added here.
+		// TODO: Stored XSS, DOM XSS, NoSQL, LDAP injection checks will be added here. 의 흔적 2
 		{
 			ID:          "SSRF_DETECTION",
 			Category:    checks.CategorySSRF,
@@ -196,7 +196,7 @@ func DefaultChecks() []checks.Check {
 			Category:    checks.CategoryIntegrityFailures,
 			Title:       "안전하지 않은 역직렬화 탐지",
 			Description: "파라미터 및 쿠키에서 직렬화된 데이터 패턴을 식별합니다.",
-			Mode:        ctxpkg.Passive, // Can be extended to Active
+			Mode:        ctxpkg.Passive,
 			Run:         deserialization.CheckInsecureDeserialization,
 		},
 		{

@@ -1,4 +1,3 @@
-// Package injection implements checks for injection vulnerabilities like SQLi and XSS.
 package injection
 
 import (
@@ -23,7 +22,7 @@ func CheckSQLInjection(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		return findings, nil
 	}
 
-	// Basic SQL error patterns (simplified list)
+	// Basic SQL error patterns
 	errorPatterns := []string{
 		"SQL syntax", "mysql_fetch", "ORA-", "PostgreSQL error", "SQLite/JDBCDriver", "System.Data.SqlClient",
 	}
@@ -63,16 +62,16 @@ func CheckSQLInjection(ctx *ctxpkg.Context) ([]report.Finding, error) {
 
 			for _, pattern := range errorPatterns {
 				if strings.Contains(bodyString, pattern) {
+					msg := msges.GetMessage("SQL_INJECTION_ERROR_BASED")
 					findings = append(findings, report.Finding{
 						ID:         "SQL_INJECTION_ERROR_BASED",
 						Category:   string(checks.CategoryInputHandling),
 						Severity:   report.SeverityHigh,
 						Confidence: report.ConfidenceHigh,
-						Title:      "SQL Injection (Error Based) 취약점",
-						Message:    fmt.Sprintf("파라미터 '%s'에 '%s' 입력 시 데이터베이스 에러가 발생했습니다.", param, payload),
-						Fix:        "모든 데이터베이스 쿼리에 Prepared Statement(파라미터화된 쿼리)를 사용하고, 입력값을 검증하십시오.",
+						Title:      msg.Title,
+						Message:    fmt.Sprintf(msg.Message, param, payload),
+						Fix:        msg.Fix,
 					})
-					// Found one vulnerability for this param, move to next param to avoid spam
 					goto NextParam
 				}
 			}
@@ -83,7 +82,6 @@ func CheckSQLInjection(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	return findings, nil
 }
 
-// CheckReflectedXSS attempts to detect Reflected XSS by injecting a script tag.
 func CheckReflectedXSS(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 
@@ -91,7 +89,6 @@ func CheckReflectedXSS(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		return findings, nil
 	}
 
-	// A unique string to look for in the response
 	canary := "PRS_XSS_PROBE"
 	payload := fmt.Sprintf("\"><script>alert('%s')</script>", canary)
 
@@ -105,7 +102,6 @@ func CheckReflectedXSS(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	for param, values := range queryParams {
 		originalValue := values[0]
 
-		// Construct malicious URL
 		newParams := cloneParams(queryParams)
 		newParams.Set(param, originalValue+payload)
 		u.RawQuery = newParams.Encode()
@@ -124,16 +120,16 @@ func CheckReflectedXSS(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		bodyBytes, _ := engine.DecodeResponseBody(resp)
 		bodyString := string(bodyBytes)
 
-		// Check if payload is reflected AND content-type is HTML
 		if strings.Contains(bodyString, payload) && strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
+			msg := msges.GetMessage("REFLECTED_XSS")
 			findings = append(findings, report.Finding{
 				ID:         "REFLECTED_XSS",
 				Category:   string(checks.CategoryClientSecurity),
 				Severity:   report.SeverityHigh,
-				Confidence: report.ConfidenceMedium, // Medium because browser XSS filters might block it
-				Title:      "Reflected XSS 취약점",
-				Message:    fmt.Sprintf("파라미터 '%s'에 입력한 스크립트가 응답 본문에 그대로 반환됩니다.", param),
-				Fix:        "사용자 입력값을 HTML 엔티티로 인코딩하여 출력하고, 적절한 CSP를 설정하십시오.",
+				Confidence: report.ConfidenceMedium,
+				Title:      msg.Title,
+				Message:    fmt.Sprintf(msg.Message, param),
+				Fix:        msg.Fix,
 			})
 		}
 	}
@@ -141,7 +137,6 @@ func CheckReflectedXSS(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	return findings, nil
 }
 
-// CheckBlindSQLInjection attempts to detect time-based blind SQL injection.
 func CheckBlindSQLInjection(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 	if ctx.Mode != ctxpkg.Active {
@@ -149,7 +144,6 @@ func CheckBlindSQLInjection(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	}
 
 	delaySeconds := 5
-	// Payloads for different database systems
 	payloads := []string{
 		fmt.Sprintf("' AND (SELECT %d FROM (SELECT(SLEEP(%d)))a)-- ", delaySeconds, delaySeconds), // MySQL
 		fmt.Sprintf("'; SELECT pg_sleep(%d)--", delaySeconds),                                     // PostgreSQL
@@ -196,7 +190,6 @@ func CheckBlindSQLInjection(ctx *ctxpkg.Context) ([]report.Finding, error) {
 					Fix:                        msg.Fix,
 					IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 				})
-				// Found a potential vulnerability, move to the next parameter
 				goto NextParamBlind
 			}
 		}
@@ -214,7 +207,6 @@ func CheckOSCommandInjection(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	}
 
 	delaySeconds := 5
-	// Payloads for both Linux/Unix-like and Windows systems
 	payloads := []string{
 		fmt.Sprintf("&& sleep %d", delaySeconds),               // Unix
 		fmt.Sprintf("; sleep %d", delaySeconds),                // Unix
@@ -263,7 +255,6 @@ func CheckOSCommandInjection(ctx *ctxpkg.Context) ([]report.Finding, error) {
 					Fix:                        msg.Fix,
 					IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 				})
-				// Found a potential vulnerability, move to the next parameter
 				goto NextParamOS
 			}
 		}
@@ -273,11 +264,7 @@ func CheckOSCommandInjection(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	return findings, nil
 }
 
-// TODO: Stored XSS, DOM XSS, NoSQL, LDAP injection checks require more advanced techniques.
-// Stored XSS requires crawling and state management.
-// DOM XSS requires a headless browser.
-// NoSQL/LDAP are highly context-dependent.
-// These are placeholders for future implementation.
+// TODO: Stored XSS, DOM XSS, NoSQL, LDAP injection checks require more advanced techniques. 의 흔적 3
 
 func cloneParams(v url.Values) url.Values {
 	dst := make(url.Values, len(v))

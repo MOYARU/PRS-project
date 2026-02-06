@@ -6,20 +6,18 @@ import (
 	"strings"
 
 	"github.com/MOYARU/PRS-project/internal/checks"
-	"github.com/MOYARU/PRS-project/internal/checks/application"    // For IsErrorPage helper
-	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context" // New import with alias
+	"github.com/MOYARU/PRS-project/internal/checks/application"
+	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context"
 	"github.com/MOYARU/PRS-project/internal/engine"
-	msges "github.com/MOYARU/PRS-project/internal/messages" // New import for messages
+	msges "github.com/MOYARU/PRS-project/internal/messages"
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
-// CheckInformationLeakage checks for various types of information leakage in the response body.
 func CheckInformationLeakage(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 
-	bodyString := string(ctx.BodyBytes) // Use ctx.BodyBytes
+	bodyString := string(ctx.BodyBytes)
 
-	// Define leakage patterns
 	type leakagePattern struct {
 		MsgID string // Changed to MsgID
 		Match func(body string) bool
@@ -58,8 +56,6 @@ func CheckInformationLeakage(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		}
 	}
 
-	// Framework Signature (passive from response headers/body)
-	// Some common headers indicating frameworks
 	for headerName, headerValue := range ctx.Response.Header {
 		lowerHeaderName := strings.ToLower(headerName)
 		lowerHeaderValue := strings.ToLower(strings.Join(headerValue, " ")) // Join multiple values
@@ -77,7 +73,6 @@ func CheckInformationLeakage(ctx *ctxpkg.Context) ([]report.Finding, error) {
 			})
 		}
 		if lowerHeaderName == "server" {
-			// Exclude common CDNs/proxies, focusing on direct server technologies
 			if !(strings.Contains(lowerHeaderValue, "cloudflare") || strings.Contains(lowerHeaderValue, "aws") || strings.Contains(lowerHeaderValue, "gcp") || strings.Contains(lowerHeaderValue, "akamai")) {
 				if strings.Contains(lowerHeaderValue, "nginx") || strings.Contains(lowerHeaderValue, "apache") || strings.Contains(lowerHeaderValue, "iis") {
 					msg := msges.GetMessage("INFORMATION_LEAKAGE_SERVER_HEADER")
@@ -95,7 +90,7 @@ func CheckInformationLeakage(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		}
 	}
 
-	// Framework Signature (passive from body)
+	// Framework Signature
 	if strings.Contains(bodyString, "X-AspNet-Version") ||
 		strings.Contains(bodyString, "X-Generator") ||
 		strings.Contains(bodyString, "WordPress") ||
@@ -112,7 +107,7 @@ func CheckInformationLeakage(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		})
 	}
 
-	// Debug/Meta Endpoints (Active check)
+	// Debug/Meta Endpoints
 	if ctx.Mode == ctxpkg.Active {
 		// Common debug/meta endpoints to probe
 		debugEndpoints := []string{
@@ -136,7 +131,6 @@ func CheckInformationLeakage(ctx *ctxpkg.Context) ([]report.Finding, error) {
 
 			if resp.StatusCode == http.StatusOK {
 				bodyBytes, _ := engine.DecodeResponseBody(resp)
-				// Use IsErrorPage to filter out generic 404/error pages
 				if !application.IsErrorPage(string(bodyBytes), resp.StatusCode) {
 					msg := msges.GetMessage("INFORMATION_LEAKAGE_DEBUG_META_ENDPOINT")
 					findings = append(findings, report.Finding{

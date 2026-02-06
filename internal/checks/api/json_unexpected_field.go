@@ -8,29 +8,26 @@ import (
 	"strings"
 
 	"github.com/MOYARU/PRS-project/internal/checks"
-	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context" // New import with alias
-	msges "github.com/MOYARU/PRS-project/internal/messages"        // New import for messages
+	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context"
+	msges "github.com/MOYARU/PRS-project/internal/messages"
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
-// CheckJSONUnexpectedField checks for application behavior when unexpected fields are inserted into JSON requests.
 func CheckJSONUnexpectedField(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 
 	if ctx.Mode == ctxpkg.Passive {
-		return findings, nil // This is an active check
+		return findings, nil // 엑티브 스캔에서만
 	}
-
-	// Only proceed if the original response indicates a JSON endpoint
+	// Only proceed if the original response is JSON
 	if !strings.Contains(ctx.Response.Header.Get("Content-Type"), "application/json") {
 		return findings, nil
 	}
 
-	// Attempt to get a JSON body from the original response for modification
+	// Parse the original JSON body
 	var originalJSON map[string]interface{}
 	err := json.Unmarshal(ctx.BodyBytes, &originalJSON)
 	if err != nil {
-		// If original body is not valid JSON, or empty, create a dummy one
 		originalJSON = make(map[string]interface{})
 	}
 
@@ -42,7 +39,6 @@ func CheckJSONUnexpectedField(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		return findings, fmt.Errorf("failed to marshal modified JSON: %w", err)
 	}
 
-	// Send the request with the modified JSON
 	req, err := http.NewRequest("POST", ctx.FinalURL.String(), bytes.NewReader(modifiedJSON))
 	if err != nil {
 		return findings, err
@@ -55,17 +51,13 @@ func CheckJSONUnexpectedField(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	}
 	defer resp.Body.Close()
 
-	// Heuristic: If the response is 200 OK and doesn't explicitly reject the unexpected field, it's a finding.
-	// A robust check would involve comparing against a "clean" request response.
-	// For now, simple success without explicit error is a weak indicator.
+	// 200 OK 응답 체크 200응답은 취약점으로 간주
 	if resp.StatusCode == http.StatusOK {
-		// Further analysis needed here to confirm if the field was actually processed or just ignored.
-		// For simplicity, if it's 200 OK and not an obvious error response, we report.
 		msg := msges.GetMessage("JSON_UNEXPECTED_FIELD_INSERTION")
 		findings = append(findings, report.Finding{
 			ID:                         "JSON_UNEXPECTED_FIELD_INSERTION",
 			Category:                   string(checks.CategoryAPISecurity),
-			Severity:                   report.SeverityLow, // Low severity as it's often ignored by frameworks
+			Severity:                   report.SeverityLow,
 			Confidence:                 report.ConfidenceMedium,
 			Title:                      msg.Title,
 			Message:                    msg.Message,

@@ -13,15 +13,12 @@ import (
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
-// CheckSSRF attempts to detect Server-Side Request Forgery vulnerabilities.
 func CheckSSRF(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 	if ctx.Mode != ctxpkg.Active {
 		return findings, nil
 	}
 
-	// In a real-world scenario, you would use a dedicated OOB (Out-of-Band) interaction server (like Burp Collaborator).
-	// Here, we use "example.com" as a safe external target to check for content reflection.
 	callbackURL := "http://example.com"
 	expectedContent := "Example Domain"
 
@@ -34,7 +31,7 @@ func CheckSSRF(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	client := engine.NewHTTPClient(false, nil)
 
 	for param := range queryParams {
-		// 1. Check External SSRF (example.com)
+		// Check External SSRF
 		newParams := url.Values{}
 		for k, v := range queryParams {
 			newParams[k] = v
@@ -55,7 +52,6 @@ func CheckSSRF(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		bodyBytes, _ := engine.DecodeResponseBody(resp)
 		bodyString := string(bodyBytes)
 
-		// Check if the server fetched the external URL and reflected its content
 		if strings.Contains(bodyString, expectedContent) {
 			msg := msges.GetMessage("SSRF_CALLBACK_DETECTED")
 			findings = append(findings, report.Finding{
@@ -69,10 +65,9 @@ func CheckSSRF(ctx *ctxpkg.Context) ([]report.Finding, error) {
 				IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 			})
 		}
-		resp.Body.Close() // Close explicitly to avoid leak in loop
+		resp.Body.Close()
 
-		// 2. Check Internal Port Scan (Localhost)
-		// Attempt to access common internal services via localhost
+		// Check Internal Port Scan
 		internalTargets := []struct {
 			Port      int
 			Signature string
@@ -80,7 +75,7 @@ func CheckSSRF(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		}{
 			{22, "SSH-2.0", "SSH"},
 			{3306, "mysql", "MySQL"},
-			{6379, "redis", "Redis"}, // Redis often returns errors to HTTP requests
+			{6379, "redis", "Redis"},
 			{8080, "Apache Tomcat", "Tomcat"},
 		}
 

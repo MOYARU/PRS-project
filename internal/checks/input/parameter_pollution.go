@@ -35,8 +35,6 @@ func CheckParameterPollution(ctx *ctxpkg.Context) ([]report.Finding, error) {
 			continue
 		}
 
-		// Construct URL with duplicated parameter
-		// ?param=value&param=polluted
 		newParams := url.Values{}
 		for k, v := range queryParams {
 			newParams[k] = v

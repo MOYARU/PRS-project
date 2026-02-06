@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"strings"
 
-	"golang.org/x/net/html" // Added for HTML parsing
+	"golang.org/x/net/html"
 
 	"github.com/MOYARU/PRS-project/internal/checks"
 	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context" // New import with alias
@@ -15,7 +15,6 @@ import (
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
-// CheckWebContentExposure performs various checks on exposed web content like robots.txt, sitemap.xml, etc.
 func CheckWebContentExposure(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 
@@ -45,13 +44,6 @@ func CheckWebContentExposure(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		findings = append(findings, checkPathExposure(ctx, "/.gitlab-ci.yml", "GITLAB_CI_YML_EXPOSED", checks.CategoryFileExposure)...)
 		findings = append(findings, checkPathExposure(ctx, "/Jenkinsfile", "JENKINSFILE_EXPOSED", checks.CategoryFileExposure)...)
 
-		// Backup files (.bak, ~) - Placeholder
-
-		// Cloud metadata endpoint access (AWS/GCP) - Placeholder
-
-		// favicon hash 기반 프레임워크 추정 - Placeholder
-
-		// 디버그 페이지 흔적 (/actuator, /debug 존재 여부만)
 		findings = append(findings, checkPathExposure(ctx, "/actuator", "ACTUATOR_ENDPOINT_EXPOSED", checks.CategoryInfrastructure)...)
 		findings = append(findings, checkPathExposure(ctx, "/debug", "DEBUG_ENDPOINT_EXPOSED", checks.CategoryInfrastructure)...)
 	}
@@ -77,8 +69,6 @@ func CheckWebContentExposure(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	return findings, nil
 }
 
-// checkPathExposure attempts to fetch a specific path and reports if it's accessible.
-// It now takes the message ID as a parameter.
 func checkPathExposure(ctx *ctxpkg.Context, path string, msgID string, category checks.Category) []report.Finding {
 	var findings []report.Finding
 	targetURL := resolveRelativeURL(ctx.FinalURL, path)
@@ -89,12 +79,10 @@ func checkPathExposure(ctx *ctxpkg.Context, path string, msgID string, category 
 	}
 	defer resp.Response.Body.Close()
 
-	// Check if the status code indicates public exposure (e.g., 200 OK, not 404 Not Found)
-	// We might need to refine this to ignore 403 Forbidden if it's considered "not exposed" in some contexts
 	if resp.Response.StatusCode == http.StatusOK {
 		msg := msges.GetMessage(msgID)
 		findings = append(findings, report.Finding{
-			ID:                         strings.ReplaceAll(strings.ToUpper(path), "/", "_") + "_EXPOSED", // Dynamic ID based on path
+			ID:                         strings.ReplaceAll(strings.ToUpper(path), "/", "_") + "_EXPOSED",
 			Category:                   string(category),
 			Severity:                   report.SeverityMedium,
 			Title:                      msg.Title,
@@ -106,17 +94,14 @@ func checkPathExposure(ctx *ctxpkg.Context, path string, msgID string, category 
 	return findings
 }
 
-// resolveRelativeURL resolves a relative path against a base URL.
 func resolveRelativeURL(baseURL *url.URL, relativePath string) *url.URL {
 	newURL, _ := url.Parse(relativePath)
 	return baseURL.ResolveReference(newURL)
 }
 
-// checkMixedContent detects mixed content issues on HTTPS pages.
 func checkMixedContent(ctx *ctxpkg.Context, doc *html.Node) []report.Finding {
 	var findings []report.Finding
 
-	// Only relevant for HTTPS pages
 	if ctx.FinalURL.Scheme != "https" {
 		return findings
 	}
@@ -167,7 +152,6 @@ func checkMixedContent(ctx *ctxpkg.Context, doc *html.Node) []report.Finding {
 	return findings
 }
 
-// checkIframeSandbox detects if iframes are missing the sandbox attribute.
 func checkIframeSandbox(ctx *ctxpkg.Context, doc *html.Node) []report.Finding {
 	var findings []report.Finding
 
@@ -210,16 +194,12 @@ func checkIframeSandbox(ctx *ctxpkg.Context, doc *html.Node) []report.Finding {
 	return findings
 }
 
-// checkInlineScripts checks for the presence of inline <script> tags without a 'src' attribute.
 func checkInlineScripts(ctx *ctxpkg.Context, doc *html.Node) []report.Finding {
 	var findings []report.Finding
 
-	// Check if Content-Security-Policy header exists and is strict enough
 	cspHeader := ctx.Response.Header.Get("Content-Security-Policy")
 	hasStrictCSP := false
 	if cspHeader != "" {
-		// A very basic check: does it contain 'unsafe-inline' or is it generally permissive?
-		// A more robust check would involve parsing CSP.
 		if !strings.Contains(cspHeader, "'unsafe-inline'") &&
 			!strings.Contains(cspHeader, "script-src *") &&
 			!strings.Contains(cspHeader, "script-src 'self' 'unsafe-eval'") { // simplified check
@@ -237,8 +217,7 @@ func checkInlineScripts(ctx *ctxpkg.Context, doc *html.Node) []report.Finding {
 					break
 				}
 			}
-			if isInline && strings.TrimSpace(n.FirstChild.Data) != "" { // Check if it's not an empty script tag
-				// If CSP is not strict, or absent, report inline scripts
+			if isInline && strings.TrimSpace(n.FirstChild.Data) != "" {
 				if !hasStrictCSP {
 					msg := msges.GetMessage("INLINE_SCRIPT_DETECTED")
 					findings = append(findings, report.Finding{

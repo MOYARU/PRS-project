@@ -1,6 +1,7 @@
 /*
 Copyright © 2026 モヤル <rbffo@icloud.com>
 */
+
 package cmd
 
 import (
@@ -14,7 +15,7 @@ import (
 )
 
 var (
-	version = "1.0.0"
+	version = "1.5.0"
 
 	activeScan bool
 	jsonOutput bool
@@ -32,19 +33,16 @@ var rootCmd = &cobra.Command{
 		if len(args) == 0 {
 			interactive.RunInteractiveMode(cmd)
 		} else {
-			// One-shot execution for provided arguments
 			target := args[0]
 			err := scan.RunScan(target, activeScan, crawl, depth, jsonOutput, htmlOutput, delay)
 			if err != nil {
-				fmt.Printf("%s❌ Scan failed: %v%s\n", ui.ColorRed, err, ui.ColorReset)
+				fmt.Printf("%sScan failed: %v%s\n", ui.ColorRed, err, ui.ColorReset)
 				os.Exit(1)
 			}
 		}
 	},
 }
 
-// Execute adds all child commands to the root command and sets flags appropriately.
-// This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
 	err := rootCmd.Execute()
 	if err != nil {
@@ -58,8 +56,6 @@ func init() {
 	rootCmd.Flags().BoolVar(&crawl, "crawler", false, "Enable crawling to discover more pages")
 	rootCmd.Flags().IntVar(&depth, "depth", 2, "Crawling depth (default: 2)")
 	rootCmd.Flags().IntVar(&delay, "delay", 0, "Delay between requests in milliseconds (e.g., 500)")
-	// Mark flags as hidden if in interactive mode, or just don't set them for interactive.
-	// For now, keep them as is.
 
 	rootCmd.Long = ui.AsciiArt + `
 PRS (Passive Reconnaissance Scanner) is a lightweight, defensive-first web security scanner.

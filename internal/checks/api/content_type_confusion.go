@@ -4,26 +4,22 @@ import (
 	"bytes"
 	"encoding/json"
 
-	//"fmt" // Keep fmt commented out as it's not used directly here
 	"net/http"
 	"strings"
 
 	"github.com/MOYARU/PRS-project/internal/checks"
-	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context" // New import with alias
-	msges "github.com/MOYARU/PRS-project/internal/messages"        // New import for messages
+	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context"
+	msges "github.com/MOYARU/PRS-project/internal/messages"
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
-// CheckContentTypeConfusion checks for Content-Type related vulnerabilities, e.g., JSON API allowing text/plain.
 func CheckContentTypeConfusion(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 
 	if ctx.Mode == ctxpkg.Passive {
-		return findings, nil // Content-Type confusion checks are active
+		return findings, nil // 엑티브 스캔에서만
 	}
 
-	// Check 1: JSON API allowing text/plain
-	// Only if the original response was application/json, indicating a JSON endpoint
 	if strings.Contains(ctx.Response.Header.Get("Content-Type"), "application/json") {
 		dummyJSON := map[string]string{"test": "value"}
 		jsonBody, _ := json.Marshal(dummyJSON)
@@ -42,7 +38,6 @@ func CheckContentTypeConfusion(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusOK && strings.Contains(resp.Header.Get("Content-Type"), "application/json") {
-			// If it still returns JSON successfully, it might be vulnerable
 			msg := msges.GetMessage("JSON_API_TEXT_PLAIN_ALLOWED")
 			findings = append(findings, report.Finding{
 				ID:                         "JSON_API_TEXT_PLAIN_ALLOWED",
@@ -71,7 +66,6 @@ func CheckContentTypeConfusion(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	defer resp.Body.Close()
 
 	if strings.Contains(resp.Header.Get("Content-Type"), "application/json") && !strings.Contains(ctx.Response.Header.Get("Content-Type"), "text/html") {
-		// If it ignored Accept: text/html and still returned JSON (assuming original wasn't HTML)
 		msg := msges.GetMessage("ACCEPT_HEADER_IGNORED")
 		findings = append(findings, report.Finding{
 			ID:                         "ACCEPT_HEADER_IGNORED",

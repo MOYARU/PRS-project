@@ -19,7 +19,7 @@ const (
 	ColorGreen  = "\033[92m" // Bright Green
 	ColorYellow = "\033[93m" // Bright Yellow
 
-	// Severity-specific colors
+	// 색상 추가
 	ColorInfo   = "\033[37m" // White/Light Gray for INFO
 	ColorLow    = "\033[34m" // Blue for LOW
 	ColorMedium = "\033[33m" // Yellow/Orange for MEDIUM

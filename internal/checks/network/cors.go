@@ -5,18 +5,15 @@ import (
 	"net/http"
 
 	"github.com/MOYARU/PRS-project/internal/checks"
-	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context" // New import with alias
+	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context"
 	"github.com/MOYARU/PRS-project/internal/engine"
-	msges "github.com/MOYARU/PRS-project/internal/messages" // New import for messages
+	msges "github.com/MOYARU/PRS-project/internal/messages"
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
-// CheckCORSConfiguration checks for Cross-Origin Resource Sharing (CORS) configuration errors.
 func CheckCORSConfiguration(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 
-	// Passive checks from original response
-	// Check for 'Access-Control-Allow-Origin: *' (wildcard)
 	if ctx.Response.Header.Get("Access-Control-Allow-Origin") == "*" {
 		msg := msges.GetMessage("CORS_WILDCARD_ORIGIN")
 		findings = append(findings, report.Finding{
@@ -30,7 +27,6 @@ func CheckCORSConfiguration(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		})
 	}
 
-	// Active checks for Origin reflection
 	if ctx.Mode == ctxpkg.Active {
 		testOrigin := "https://malicious.com"
 		req, err := http.NewRequest("GET", ctx.FinalURL.String(), nil)
@@ -55,7 +51,7 @@ func CheckCORSConfiguration(ctx *ctxpkg.Context) ([]report.Finding, error) {
 				Severity:   report.SeverityHigh,
 				Confidence: report.ConfidenceHigh,
 				Title:      msg.Title,
-				Message:    fmt.Sprintf(msg.Message, testOrigin), // Use fmt.Sprintf for variable parts
+				Message:    fmt.Sprintf(msg.Message, testOrigin),
 				Fix:        msg.Fix,
 			})
 		}

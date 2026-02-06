@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/MOYARU/PRS-project/internal/checks"
-	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context" // New import with alias
-	msges "github.com/MOYARU/PRS-project/internal/messages"        // New import for messages
+	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context"
+	msges "github.com/MOYARU/PRS-project/internal/messages"
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
@@ -38,12 +38,8 @@ func CheckSecurityHeaders(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	return findings, nil
 }
 
-// missingHeader checks for a missing header and returns a finding if it's absent.
-// It now takes the message ID as a parameter.
 func missingHeader(headers http.Header, msgID string, category checks.Category, severity report.Severity) []report.Finding {
-	// Derive the actual header name from the message ID for checking presence.
-	// This is a heuristic and might need refinement if IDs don't directly map to header names.
-	// For example, "CONTENT_SECURITY_POLICY_MISSING" -> "Content-Security-Policy"
+
 	headerName := strings.ReplaceAll(strings.ToLower(msgID), "_MISSING", "")
 	headerName = strings.ReplaceAll(headerName, "_", "-")
 	headerName = strings.Replace(headerName, "content-security-policy", "Content-Security-Policy", 1) // Specific capitalization

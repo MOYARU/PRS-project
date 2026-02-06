@@ -12,14 +12,9 @@ import (
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
-// CheckInsecureDeserialization checks for patterns indicating serialized data usage.
 func CheckInsecureDeserialization(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 
-	// This check can be passive (inspecting values) or active (injecting).
-	// We start with passive inspection of parameters and cookies.
-
-	// 1. Inspect Query Parameters
 	u, _ := url.Parse(ctx.FinalURL.String())
 	for param, values := range u.Query() {
 		for _, val := range values {
@@ -29,7 +24,6 @@ func CheckInsecureDeserialization(ctx *ctxpkg.Context) ([]report.Finding, error)
 		}
 	}
 
-	// 2. Inspect Cookies
 	if ctx.Response != nil {
 		for _, cookie := range ctx.Response.Cookies() {
 			if isSerializedData(cookie.Value) {
@@ -49,15 +43,12 @@ func isSerializedData(value string) bool {
 		if strings.HasPrefix(string(decoded), "\xac\xed\x00\x05") {
 			return true
 		}
-		// Check for Python Pickle (simple heuristic: starts with ( and ends with .)
-		// or specific opcodes like cos\nsystem
+
 		if strings.Contains(string(decoded), "cos") && strings.Contains(string(decoded), "system") {
 			return true
 		}
 	}
 
-	// 2. Check for PHP Serialization (O:digit:"class_name"...)
-	// Simple regex-like check: O:[0-9]+:
 	if strings.HasPrefix(value, "O:") || strings.HasPrefix(value, "a:") {
 		// Further validation could be done here
 		return true

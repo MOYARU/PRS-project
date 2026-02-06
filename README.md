@@ -7,7 +7,7 @@
  #+#             #+#    #+#     #+#    #+#     
 ###             ###    ###      ########  
 ```
-# PRS
+# PRS v1.5.0
 ### *Passive Reconnaissance Scanner*
 ### PRS focuses on risk visibility, not exploitation.
 
@@ -47,5 +47,7 @@ Manual verification recommended
 5. --html : HTML형식의 결과 리포트를 받습니다.
 6. --delay : 리퀘스트 사이에 딜레이를 넣습니다. 서버의 과부하를 방지합니다.
 
+#### 한글 / 영어 선택이 추가되었으며 방향키로 선택 가능합니다.
+
 ## roadmap
-1. 영어 지원(?)
+검사를 좀더 진득하게(?)

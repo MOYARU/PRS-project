@@ -1,47 +1,61 @@
 package scan
 
 import (
-	"bufio"
+	"context"
 	"fmt"
 	"os"
-	"strings"
+	"os/signal"
 	"time"
 
 	"github.com/MOYARU/PRS-project/internal/app/output"
 	"github.com/MOYARU/PRS-project/internal/app/ui"
-	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context" // New import with alias
+	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context"
 	"github.com/MOYARU/PRS-project/internal/checks/scanner"
-	"github.com/MOYARU/PRS-project/internal/crawler" // New import
+	"github.com/MOYARU/PRS-project/internal/crawler"
+	msges "github.com/MOYARU/PRS-project/internal/messages"
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
-// runScan orchestrates the scanning process.
 func RunScan(target string, activeScan bool, crawl bool, depth int, jsonOutput bool, htmlOutput bool, delay int) error {
+	// Setup context with cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handle Ctrl+C
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+	defer signal.Stop(c)
+	go func() {
+		select {
+		case <-c:
+			fmt.Println(ui.ColorYellow + msges.GetUIMessage("ScanCancelled") + ui.ColorReset)
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
 	// Active scan safety check
 	if activeScan {
-		fmt.Printf("\n%s[!] WARNING: Active Scan mode can send potentially harmful requests.%s\n", ui.ColorRed, ui.ColorReset)
-		fmt.Printf("%s    This tool is intended for assets you own or have explicit permission to test.%s\n", ui.ColorYellow, ui.ColorReset)
-		fmt.Printf("%s    Do you want to proceed with the active scan? (y/N): %s", ui.ColorYellow, ui.ColorReset)
+		fmt.Printf("\n%s%s%s\n", ui.ColorRed, msges.GetUIMessage("ActiveScanWarning"), ui.ColorReset)
+		fmt.Printf("%s%s%s\n", ui.ColorYellow, msges.GetUIMessage("ActiveScanPermission"), ui.ColorReset)
 
-		reader := bufio.NewReader(os.Stdin)
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(strings.ToLower(input))
-
-		if input != "y" {
-			fmt.Printf("\n%sActive scan aborted by user.%s\n", ui.ColorYellow, ui.ColorReset)
+		prompt := fmt.Sprintf("%s%s%s", ui.ColorYellow, msges.GetUIMessage("ActiveScanPrompt"), ui.ColorReset)
+		confirmed, err := ui.Confirm(prompt)
+		if err != nil || !confirmed {
+			fmt.Printf("\n%s%s%s\n", ui.ColorYellow, msges.GetUIMessage("ActiveScanAborted"), ui.ColorReset)
 			return fmt.Errorf("active scan aborted by user")
 		}
 	}
 
-	fmt.Printf("%sTarget: %s%s\n", ui.ColorWhite, target, ui.ColorReset)
+	fmt.Printf("%s%s%s\n", ui.ColorWhite, msges.GetUIMessage("Target", target), ui.ColorReset)
 
 	if activeScan {
-		fmt.Printf("%sMode: Active%s\n", ui.ColorWhite, ui.ColorReset)
+		fmt.Printf("%s%s%s\n", ui.ColorWhite, msges.GetUIMessage("ModeActive"), ui.ColorReset)
 	} else {
-		fmt.Printf("%sMode: Passive%s\n", ui.ColorWhite, ui.ColorReset)
+		fmt.Printf("%s%s%s\n", ui.ColorWhite, msges.GetUIMessage("ModePassive"), ui.ColorReset)
 	}
 
-	fmt.Printf("%sStatus: Ready to scan%s\n", ui.ColorGray, ui.ColorReset)
+	fmt.Printf("%s%s%s\n", ui.ColorGray, msges.GetUIMessage("StatusReady"), ui.ColorReset)
 
 	mode := ctxpkg.Passive
 	if activeScan {
@@ -56,15 +70,20 @@ func RunScan(target string, activeScan bool, crawl bool, depth int, jsonOutput b
 		if err != nil {
 			return fmt.Errorf("failed to initialize crawler: %w", err)
 		}
-		targets = c.Start()
-		fmt.Printf("%s✔ 크롤링 완료: 총 %d개의 페이지 발견%s\n", ui.ColorGreen, len(targets), ui.ColorReset)
+		targets = c.Start(ctx) // Pass context
+		fmt.Printf("%s%s%s\n", ui.ColorGreen, msges.GetUIMessage("CrawlingComplete", len(targets)), ui.ColorReset)
 	} else {
 		targets = []string{target}
 	}
 
+	// Check if cancelled during crawl
+	if ctx.Err() != nil {
+		return nil
+	}
+
 	// Display Crawled Scope
 	if len(targets) > 1 {
-		fmt.Printf("\n%s--- 탐색된 범위 (Crawled Scope) ---%s\n", ui.ColorWhite, ui.ColorReset)
+		fmt.Printf("\n%s%s%s\n", ui.ColorWhite, msges.GetUIMessage("CrawledScope"), ui.ColorReset)
 		for _, t := range targets {
 			fmt.Printf(" - %s\n", t)
 		}
@@ -76,15 +95,18 @@ func RunScan(target string, activeScan bool, crawl bool, depth int, jsonOutput b
 	startTime := time.Now()
 
 	for i, t := range targets {
-		fmt.Printf("\n%s[%d/%d] Scanning: %s%s\n", ui.ColorWhite, i+1, len(targets), t, ui.ColorReset)
+		if ctx.Err() != nil {
+			break
+		}
+		fmt.Printf("\n%s%s%s\n", ui.ColorWhite, msges.GetUIMessage("ScanningProgress", i+1, len(targets), t), ui.ColorReset)
 		scn, err := scanner.New(t, mode, delayDuration)
 		if err != nil {
-			fmt.Printf("%s⚠️ Failed to initialize scanner for %s: %v%s\n", ui.ColorRed, t, err, ui.ColorReset)
+			fmt.Printf("%s%s%s\n", ui.ColorRed, msges.GetUIMessage("ScannerInitFailed", t, err), ui.ColorReset)
 			continue
 		}
-		findings, performedChecks, err := scn.Run()
+		findings, performedChecks, err := scn.Run(ctx) // Pass context
 		if err != nil {
-			fmt.Printf("%s⚠️ Failed to scan %s: %v%s\n", ui.ColorRed, t, err, ui.ColorReset)
+			fmt.Printf("%s%s%s\n", ui.ColorRed, msges.GetUIMessage("ScanFailed", t, err), ui.ColorReset)
 			continue
 		}
 		allFindings = append(allFindings, findings...)
@@ -100,20 +122,20 @@ func RunScan(target string, activeScan bool, crawl bool, depth int, jsonOutput b
 	}
 
 	endTime := time.Now()
-	fmt.Printf("\n%s✔ All Scans completed%s\n", ui.ColorGreen, ui.ColorReset)
+	fmt.Printf("\n%s%s%s\n", ui.ColorGreen, msges.GetUIMessage("AllScansCompleted"), ui.ColorReset)
 
 	output.PrintFindings(allFindings)
 	output.PrintScanSummary(allPerformedChecks, allFindings)
 
 	if jsonOutput {
 		if err := output.SaveJSONReport(target, targets, allFindings, startTime, endTime); err != nil {
-			fmt.Printf("❌ Failed to save JSON report: %v\n", err)
+			fmt.Printf("[Error] %s\n", msges.GetUIMessage("JSONReportFailed", err))
 		}
 	}
 
 	if htmlOutput {
 		if err := output.SaveHTMLReport(target, targets, allFindings, startTime, endTime); err != nil {
-			fmt.Printf("❌ Failed to save HTML report: %v\n", err)
+			fmt.Printf("%s\n", msges.GetUIMessage("HTMLReportFailed", err))
 		}
 	}
 	return nil

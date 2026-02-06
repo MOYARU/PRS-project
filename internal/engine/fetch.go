@@ -1,7 +1,7 @@
 package engine
 
 import (
-	"crypto/tls" // Added import
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -22,7 +22,7 @@ func Fetch(target string) (*FetchResult, error) {
 		return nil, err
 	}
 
-	resp, err := fetchOnce(initialURL.String(), false, nil) // Pass nil for default TLS config
+	resp, err := fetchOnce(initialURL.String(), false, nil)
 	if err != nil {
 		return nil, err
 	}

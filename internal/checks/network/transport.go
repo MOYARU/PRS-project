@@ -8,13 +8,12 @@ import (
 	"time"
 
 	"github.com/MOYARU/PRS-project/internal/checks"
-	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context" // New import with alias
+	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context"
 	"github.com/MOYARU/PRS-project/internal/engine"
-	msges "github.com/MOYARU/PRS-project/internal/messages" // New import for messages
+	msges "github.com/MOYARU/PRS-project/internal/messages"
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
-// CheckTransportSecurity performs checks related to HTTPS usage and forced redirects.
 func CheckTransportSecurity(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	if ctx.InitialURL == nil {
 		return nil, nil
@@ -61,19 +60,13 @@ func CheckTransportSecurity(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	return findings, nil
 }
 
-// weakCiphers is a map of known weak TLS cipher suites.
-// This list is not exhaustive and should be updated as new weaknesses are discovered.
 var weakCiphers = map[uint16]string{
-	// Remaining weak ciphers or those that might still be defined.
-	// For compilation purposes, only keep those that are guaranteed to exist.
-	// Actual weak cipher detection should be more comprehensive.
+	// 취약 암호 탐지에 관련
 }
 
-// CheckTLSConfiguration performs various checks on the TLS/SSL configuration.
 func CheckTLSConfiguration(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 
-	// If no TLS connection was established, we cannot perform these checks.
 	if ctx.Response == nil || ctx.Response.TLS == nil {
 		return findings, nil
 	}
@@ -82,9 +75,6 @@ func CheckTLSConfiguration(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	targetHost := ctx.FinalURL.Hostname()
 	currentTime := time.Now()
 
-	// --- Check TLS Version ---
-	// Probe for TLS 1.0/1.1 support by attempting connections with lower MinVersion
-	// This requires making new requests, as ctx.Response.TLS reflects the initial (secure) connection.
 	for _, minVersion := range []uint16{tls.VersionTLS10, tls.VersionTLS11} {
 		if minVersion >= tls.VersionTLS12 { // Skip if probing for current or stronger versions
 			continue
@@ -97,19 +87,12 @@ func CheckTLSConfiguration(ctx *ctxpkg.Context) ([]report.Finding, error) {
 
 		tempResult, err := engine.FetchWithTLSConfig(ctx.FinalURL.String(), tlsConfig)
 		if err != nil {
-			// If we get an error, it usually means the server *doesn't* support this version.
-			// Specifically, a TLS handshake error or timeout could indicate this.
-			// We're looking for successful handshakes at lower versions.
 			if opErr, ok := err.(*net.OpError); ok && opErr.Op == "read" {
-				// This often happens if the server immediately closes the connection due to unsupported TLS version.
 				continue
 			}
 			if _, ok := err.(tls.RecordHeaderError); ok {
-				// This happens if the server doesn't understand the client hello.
 				continue
 			}
-			// Other errors might be actual network issues, not TLS version related.
-			// For now, we assume if an error occurs, this version is not successfully negotiated.
 			continue
 		}
 
@@ -129,7 +112,7 @@ func CheckTLSConfiguration(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		}
 	}
 
-	// If the connection was established using TLS 1.0 or 1.1 with the main fetch (unlikely due to client config)
+	// If the connection was established using TLS 1.0 or 1.1 with the main fetch
 	if connState.Version < tls.VersionTLS12 {
 		msg := msges.GetMessage("TLS_VERSION_DETECTED_V") // ID without %d
 		findings = append(findings, report.Finding{
@@ -155,7 +138,6 @@ func CheckTLSConfiguration(ctx *ctxpkg.Context) ([]report.Finding, error) {
 			Fix:      msg.Fix,
 		})
 	} else if connState.Version == tls.VersionTLS12 && !isForwardSecret(connState.CipherSuite) {
-		// For TLS 1.2, recommend Forward Secrecy if not already present
 		msg := msges.GetMessage("NO_FORWARD_SECRECY_TLS12")
 		findings = append(findings, report.Finding{
 			ID:       "NO_FORWARD_SECRECY_TLS12",
@@ -224,7 +206,6 @@ func CheckTLSConfiguration(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	return findings, nil
 }
 
-// tlsVersionToString converts a TLS version constant to a human-readable string.
 func tlsVersionToString(version uint16) string {
 	switch version {
 	case tls.VersionTLS10:
@@ -240,8 +221,6 @@ func tlsVersionToString(version uint16) string {
 	}
 }
 
-// isForwardSecret checks if a cipher suite provides Forward Secrecy.
-// This list needs to be maintained and updated.
 func isForwardSecret(cipherSuite uint16) bool {
 	switch cipherSuite {
 	case tls.TLS_AES_128_GCM_SHA256,
@@ -249,8 +228,7 @@ func isForwardSecret(cipherSuite uint16) bool {
 		tls.TLS_CHACHA20_POLY1305_SHA256:
 		return true
 	default:
-		// Many other DHE/ECDHE suites are also forward secret.
-		// For simplicity, this checks common strong ones. A more comprehensive list might be needed.
+
 		if strings.Contains(tls.CipherSuiteName(cipherSuite), "DHE") || strings.Contains(tls.CipherSuiteName(cipherSuite), "ECDHE") {
 			return true
 		}

@@ -1,6 +1,7 @@
 package crawler
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/MOYARU/PRS-project/internal/app/ui"
 	"github.com/MOYARU/PRS-project/internal/engine"
+	msges "github.com/MOYARU/PRS-project/internal/messages"
 	"golang.org/x/net/html"
 )
 
@@ -21,8 +23,8 @@ type Crawler struct {
 	Results  []string
 	Client   *http.Client
 	mu       sync.Mutex
-	sem      chan struct{}  // 동시성 제어를 위한 세마포어
-	wg       sync.WaitGroup // 고루틴 대기를 위한 WaitGroup
+	sem      chan struct{}
+	wg       sync.WaitGroup // 고루틴
 }
 
 func New(target string, depth int, delay time.Duration) (*Crawler, error) {
@@ -34,8 +36,6 @@ func New(target string, depth int, delay time.Duration) (*Crawler, error) {
 		u.Scheme = "https"
 	}
 
-	// engine.NewHTTPClient가 delay를 지원하지 않을 수 있으므로
-	// 클라이언트 생성 후 Transport를 래핑하여 딜레이를 적용합니다.
 	client := engine.NewHTTPClient(false, nil)
 	if delay > 0 {
 		client.Transport = &delayedTransport{
@@ -50,21 +50,30 @@ func New(target string, depth int, delay time.Duration) (*Crawler, error) {
 		Visited:  make(map[string]bool),
 		Results:  []string{},
 		Client:   client,
-		sem:      make(chan struct{}, 10), // 최대 10개의 동시 요청 허용
+		sem:      make(chan struct{}, 10), // 동시 요청 제한
 	}, nil
 }
 
-func (c *Crawler) Start() []string {
-	fmt.Printf("%s[*] 사이트 구조 크롤링 시작 (Max Depth: %d)...%s\n", ui.ColorInfo, c.MaxDepth, ui.ColorReset)
+func (c *Crawler) Start(ctx context.Context) []string {
+	ctx, cancel := ui.WaitForCancel(ctx)
+	defer cancel()
+
+	fmt.Printf("%s%s%s\n", ui.ColorInfo, msges.GetUIMessage("CrawlerStart", c.MaxDepth), ui.ColorReset)
 	c.wg.Add(1)
-	go c.crawl(c.BaseURL.String(), 0)
+	go c.crawl(ctx, c.BaseURL.String(), 0)
 	c.wg.Wait()
 	fmt.Println() // 크롤링 완료 후 줄바꿈
 	return c.Results
 }
 
-func (c *Crawler) crawl(targetURL string, depth int) {
+func (c *Crawler) crawl(ctx context.Context, targetURL string, depth int) {
 	defer c.wg.Done()
+
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
 
 	if depth > c.MaxDepth {
 		return
@@ -87,19 +96,21 @@ func (c *Crawler) crawl(targetURL string, depth int) {
 	c.Results = append(c.Results, targetURL)
 	c.mu.Unlock()
 
-	fmt.Print(".") // 진행 상황 시각화 (페이지 방문 시 점 출력)
+	fmt.Print(".") // 진행 상황 시각화
 
-	c.sem <- struct{}{}        // 세마포어 획득 (슬롯 차지)
-	defer func() { <-c.sem }() // 함수 종료 시 반납
+	select {
+	case c.sem <- struct{}{}: // 세마포어 획득
+		defer func() { <-c.sem }() // 함수 종료 시 반납
+	case <-ctx.Done():
+		return
+	}
 
-	// Fetch page
 	resp, err := c.Client.Get(targetURL)
 	if err != nil {
 		return
 	}
 	defer resp.Body.Close()
 
-	// Only parse HTML
 	if !strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
 		return
 	}
@@ -109,7 +120,7 @@ func (c *Crawler) crawl(targetURL string, depth int) {
 		absoluteURL := c.resolveURL(link)
 		if absoluteURL != "" && c.isSameDomain(absoluteURL) {
 			c.wg.Add(1)
-			go c.crawl(absoluteURL, depth+1)
+			go c.crawl(ctx, absoluteURL, depth+1)
 		}
 	}
 }
@@ -159,11 +170,10 @@ func (c *Crawler) isSameDomain(link string) bool {
 	linkHost := strings.ToLower(u.Host)
 	baseHost := strings.ToLower(c.BaseURL.Host)
 
-	// 동일 도메인이거나 서브도메인인 경우 허용 (예: sub.example.com -> example.com)
+	// 동일 도메인이거나 서브도메인인 경우 허용
 	return linkHost == baseHost || strings.HasSuffix(linkHost, "."+baseHost)
 }
 
-// delayedTransport applies a delay before each request.
 type delayedTransport struct {
 	Transport http.RoundTripper
 	Delay     time.Duration

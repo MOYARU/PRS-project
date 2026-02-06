@@ -11,11 +11,9 @@ import (
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
-// CheckVulnerableComponents identifies outdated or vulnerable components from headers and body.
 func CheckVulnerableComponents(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 
-	// 1. Check Headers (Server, X-Powered-By)
 	headersToCheck := map[string]string{
 		"Server":       ctx.Response.Header.Get("Server"),
 		"X-Powered-By": ctx.Response.Header.Get("X-Powered-By"),
@@ -29,16 +27,13 @@ func CheckVulnerableComponents(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		}
 	}
 
-	// 2. Check HTML Comments for version info
-	// Regex to find comments containing version-like strings (e.g., v1.2.3, 1.2.3)
-	// This is a heuristic.
 	bodyString := string(ctx.BodyBytes)
 	commentRegex := regexp.MustCompile(`<!--.*?v?(\d+\.\d+(\.\d+)?).*?-->`)
 	matches := commentRegex.FindAllStringSubmatch(bodyString, -1)
 
 	for _, match := range matches {
 		fullComment := match[0]
-		// Filter out common non-version numbers if needed
+
 		if isOutdated(fullComment) {
 			findings = append(findings, createFinding(fmt.Sprintf("HTML Comment: %s", fullComment)))
 		}
@@ -47,12 +42,9 @@ func CheckVulnerableComponents(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	return findings, nil
 }
 
-// isOutdated checks if the version string corresponds to known old versions.
-// This is a simplified list for demonstration. A real scanner would use a CVE database.
 func isOutdated(versionStr string) bool {
 	v := strings.ToLower(versionStr)
 
-	// Example heuristics for outdated/vulnerable versions
 	if strings.Contains(v, "apache/2.2") || strings.Contains(v, "apache/2.0") {
 		return true
 	}

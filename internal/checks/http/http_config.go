@@ -3,60 +3,40 @@ package http
 import (
 	"fmt"
 	"io"
-	"math/rand" // Added for generateRandomString
+	"math/rand"
 	"net/http"
 	"strings"
-	"time" // Added for seeding rand
+	"time"
 
 	"github.com/MOYARU/PRS-project/internal/checks"
-	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context" // New import with alias
-	msges "github.com/MOYARU/PRS-project/internal/messages"        // New import for messages
+	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context"
+	msges "github.com/MOYARU/PRS-project/internal/messages"
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
-
-// CheckHTTPConfiguration performs various checks on HTTP protocol settings.
 func CheckHTTPConfiguration(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 
 	if ctx.Response == nil {
 		return findings, nil
 	}
-
-	// TRACE 메서드 활성화
 	findings = append(findings, checkTRACEMethod(ctx)...)
 
-	// OPTIONS 과다 노출
 	findings = append(findings, checkOPTIONSMethod(ctx)...)
 
-	// PUT / DELETE 허용 여부 (Active scan only)
 	if ctx.Mode == ctxpkg.Active {
 		findings = append(findings, checkPUTDELETEMethods(ctx)...)
 	}
 
-	// HTTP 응답 코드 이상 (401/403 혼동) - Requires more context/logic, perhaps for specific paths.
-	// For now, this is a placeholder.
-
-	// Chunked encoding 취약 설정 - This is hard to detect passively from a single response without deep packet inspection.
-	// Placeholder for now.
-
-	// HTTP/2 설정 오류 - Check response headers for H2. If not, maybe try to force HTTP/2?
-	// Placeholder for now.
-
 	return findings, nil
 }
 
-// checkTRACEMethod checks if the TRACE method is enabled.
 func checkTRACEMethod(ctx *ctxpkg.Context) []report.Finding {
 	var findings []report.Finding
-	if ctx.FinalURL.Scheme != "https" { // Only check for TRACE over HTTPS to avoid plaintext issues
+	if ctx.FinalURL.Scheme != "https" {
 		return findings
 	}
 
-	// Make a TRACE request
 	req, err := http.NewRequest("TRACE", ctx.FinalURL.String(), nil)
 	if err != nil {
 		return findings
@@ -76,7 +56,6 @@ func checkTRACEMethod(ctx *ctxpkg.Context) []report.Finding {
 		}
 		bodyString := string(bodyBytes)
 
-		// If the response body contains the TRACE request itself, it's enabled
 		if strings.Contains(bodyString, "TRACE / HTTP/1.1") || strings.Contains(bodyString, "TRACE "+ctx.FinalURL.Path+" HTTP/1.1") {
 			msg := msges.GetMessage("TRACE_METHOD_ENABLED")
 			findings = append(findings, report.Finding{
@@ -92,7 +71,6 @@ func checkTRACEMethod(ctx *ctxpkg.Context) []report.Finding {
 	return findings
 }
 
-// checkOPTIONSMethod checks for over-exposed OPTIONS method.
 func checkOPTIONSMethod(ctx *ctxpkg.Context) []report.Finding {
 	var findings []report.Finding
 
@@ -112,7 +90,7 @@ func checkOPTIONSMethod(ctx *ctxpkg.Context) []report.Finding {
 		allowHeader := resp.Header.Get("Allow")
 		if allowHeader != "" {
 			allowedMethods := strings.Split(allowHeader, ",")
-			if len(allowedMethods) > 3 { // More than GET, HEAD, POST typically indicates over-exposure
+			if len(allowedMethods) > 3 {
 				msg := msges.GetMessage("OPTIONS_OVER_EXPOSED")
 				findings = append(findings, report.Finding{
 					ID:       "OPTIONS_OVER_EXPOSED",
@@ -128,7 +106,7 @@ func checkOPTIONSMethod(ctx *ctxpkg.Context) []report.Finding {
 	return findings
 }
 
-// checkPUTDELETEMethods checks if PUT/DELETE methods are allowed (active scan).
+// checkPUTDELETEMethods checks if PUT/DELETE methods are allowed
 func checkPUTDELETEMethods(ctx *ctxpkg.Context) []report.Finding {
 	var findings []report.Finding
 	testURL := ctx.FinalURL.String() + "/prs_test_file_" + generateRandomString(10) // Use a random file name
@@ -181,9 +159,10 @@ func checkPUTDELETEMethods(ctx *ctxpkg.Context) []report.Finding {
 // generateRandomString generates a random string of specified length.
 func generateRandomString(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	b := make([]byte, length)
 	for i := range b {
-		b[i] = charset[rand.Intn(len(charset))] // rand is not cryptographically secure, but fine for file names
+		b[i] = charset[r.Intn(len(charset))] // rand is not cryptographically secure, but fine for file names
 	}
 	return string(b)
 }

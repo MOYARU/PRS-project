@@ -8,19 +8,20 @@ import (
 	"time"
 
 	"github.com/MOYARU/PRS-project/internal/app/ui"
-	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context" // New import with alias
-	"github.com/MOYARU/PRS-project/internal/checks/registry"       // Added for DefaultChecks()
+	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context"
+	"github.com/MOYARU/PRS-project/internal/checks/registry"
+	msges "github.com/MOYARU/PRS-project/internal/messages"
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
-// printFindings prints the scan findings to the console with color coding.
+// printFindings prints the scan findings to the console with appropriate formatting and colors.
 func PrintFindings(findings []report.Finding) {
 	if len(findings) == 0 {
-		fmt.Printf("%s✔ No issues found%s\n", ui.ColorGreen, ui.ColorReset)
+		fmt.Printf("%s%s%s\n", ui.ColorGreen, msges.GetUIMessage("ConsoleNoIssues"), ui.ColorReset)
 		return
 	}
 
-	fmt.Printf("\n%s--- Findings ---%s\n", ui.ColorWhite, ui.ColorReset)
+	fmt.Printf("\n%s%s%s\n", ui.ColorWhite, msges.GetUIMessage("ConsoleFindingsTitle"), ui.ColorReset)
 	for _, f := range findings {
 		var severityColor string
 		switch f.Severity {
@@ -36,16 +37,27 @@ func PrintFindings(findings []report.Finding) {
 			severityColor = ui.ColorWhite // 기본 색상
 		}
 
-		fmt.Printf("\n%s[%s] (%s) %s%s\n", severityColor, f.Severity, f.Category, f.Title, ui.ColorReset)
-		fmt.Printf("%s → %s%s\n", ui.ColorGray, f.Message, ui.ColorReset)
-		fmt.Printf("%s → Fix: %s%s\n", ui.ColorGray, f.Fix, ui.ColorReset)
-		if f.Confidence != "" { // Only print confidence if it's set
-			fmt.Printf("%s → Confidence: %s%s\n", ui.ColorGray, f.Confidence, ui.ColorReset)
+		// Localize finding details
+		msg := msges.GetMessage(f.ID)
+		title := f.Title
+		message := f.Message
+		fix := f.Fix
+		if msg.Title != "Message Not Found" {
+			title = msg.Title
+			message = msg.Message
+			fix = msg.Fix
+		}
+
+		fmt.Printf("\n%s[%s] (%s) %s%s\n", severityColor, f.Severity, f.Category, title, ui.ColorReset)
+		fmt.Printf("%s → %s%s\n", ui.ColorGray, message, ui.ColorReset)
+		fmt.Printf("%s → %s: %s%s\n", ui.ColorGray, msges.GetUIMessage("ConsoleFixLabel"), fix, ui.ColorReset)
+		if f.Confidence != "" { // Only print confidence if it's provided
+			fmt.Printf("%s → %s: %s%s\n", ui.ColorGray, msges.GetUIMessage("ConsoleConfidenceLabel"), f.Confidence, ui.ColorReset)
 		}
 	}
 }
 
-// SaveJSONReport saves the scan results to a JSON file, including metadata and scope.
+// 이거 없애야 하나
 func SaveJSONReport(target string, scannedURLs []string, findings []report.Finding, startTime, endTime time.Time) error {
 	type JSONReport struct {
 		Target      string           `json:"target"`
@@ -82,37 +94,47 @@ func SaveJSONReport(target string, scannedURLs []string, findings []report.Findi
 		return err
 	}
 
-	fmt.Printf("\n 💾 JSON 리포트가 저장되었습니다: %s\n", filename)
+	fmt.Printf("\n%s\n", msges.GetUIMessage("JSONReportSaved", filename))
 	return nil
 }
 
-// PrintScanSummary prints a summary of all performed checks,
-// indicating whether issues were found or not.
+// PrintScanSummary prints a summary of all performed checks
 func PrintScanSummary(performedChecks map[string]bool, allFindings []report.Finding) {
-	fmt.Printf("\n%s--- Scan Summary ---%s\n", ui.ColorWhite, ui.ColorReset)
+	fmt.Printf("\n%s%s%s\n", ui.ColorWhite, msges.GetUIMessage("ConsoleScanSummaryTitle"), ui.ColorReset)
 
-	// Build a map of findings by check ID for quick lookup
 	findingsByCheckID := make(map[string]bool)
 	for _, f := range allFindings {
 		findingsByCheckID[f.ID] = true
 	}
 
 	for _, check := range registry.DefaultChecks() {
-		_, wasPerformed := performedChecks[check.ID]
-
-		if wasPerformed || check.Mode == ctxpkg.Passive {
-			var status string
-			var color string
-			if findingsByCheckID[check.ID] {
-				status = "발견됨"
-				color = ui.ColorRed
-			} else {
-				status = "발견되지 않았습니다"
-				color = ui.ColorGreen
-			}
-			fmt.Printf(" [%s] %s%s %s\n", status, color, check.Title, ui.ColorReset)
-		} else if check.Mode == ctxpkg.Active {
-			fmt.Printf(" [%s] %s%s %s\n", "Active 모드 필요", ui.ColorGray, check.Title, ui.ColorReset)
+		wasPerformed := performedChecks[check.ID]
+		checkTitle := check.Title
+		msg := msges.GetMessage(check.ID)
+		if msg.Title != "Message Not Found" {
+			checkTitle = msg.Title
 		}
+
+		var status, color string
+		found := findingsByCheckID[check.ID]
+
+		if found {
+			status = msges.GetUIMessage("CheckStatusFound")
+			color = ui.ColorRed
+		} else {
+			status = msges.GetUIMessage("CheckStatusNotFound")
+			color = ui.ColorGreen
+		}
+
+		if !wasPerformed {
+			if check.Mode == ctxpkg.Active {
+				status = msges.GetUIMessage("ConsoleActiveModeRequired")
+			} else {
+				status = msges.GetUIMessage("ConsoleSkipped")
+			}
+			color = ui.ColorGray
+		}
+
+		fmt.Printf(" [%s] %s%s%s\n", status, color, checkTitle, ui.ColorReset)
 	}
 }
