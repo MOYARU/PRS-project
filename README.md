@@ -12,7 +12,8 @@
 PRS focuses on risk visibility, not exploitation.
 
 ## Overview
-PRS is a terminal-based web security scanner focused on identifying security misconfigurations, insecure defaults, and design-level risks.
+PRS is a terminal-based web security scanner focused on identifying security misconfigurations, insecure defaults, 
+and design-level risks.
 It prioritizes clarity and safety over aggressive exploitation, providing actionable insights without attempting to compromise the target system.
 
 
@@ -36,11 +37,19 @@ Response behavior differed
 Manual verification recommended
 ```
 
+## Build
+직접 빌드는 GO 환경이 필요합니다.
+go build 와 본인의 운영체제를 선택하여 직접 빌드가 가능합니다.
+
+EXE 파일을 설치했다면
+해당 EXE 파일 위치를 터미널로 열어서
+`.\PRS`
+명령어로 실행이 가능합니다.
+
+
 ## 사용방법
 *해당 툴은 CLI툴입니다.*
-PRS를 설치하고 PRS.EXE를 프롬포트에서 실행합니다.
-`.\PRS`
-직접 빌드도 가능합니다.
+
 prs (example.com) 으로 스캔합니다.
 
 #### 옵션 소개
