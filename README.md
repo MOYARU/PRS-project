@@ -7,7 +7,7 @@
  #+#             #+#    #+#     #+#    #+#     
 ###             ###    ###      ########  
 ```
-# PRS v1.5.0
+# PRS v1.6.0
 ### *Passive Reconnaissance Scanner*
 ### PRS focuses on risk visibility, not exploitation.
 
@@ -35,7 +35,7 @@ Manual verification recommended
 
 ## 사용방법
 #### 해당 툴은 CLI툴입니다.
-#### PRS를 설치하고 PRS.EXE를 프롬포트에서 실행합니다.
+#### PRS를 설치하고 프롬프트에서 PRS.EXE를 실행합니다.
 #### .\PRS
 직접 빌드도 가능합니다.
 #### prs (example.com) 으로 스캔합니다.
@@ -50,4 +50,11 @@ Manual verification recommended
 #### 한글 / 영어 선택이 추가되었으며 방향키로 선택 가능합니다.
 
 ## roadmap
-검사를 좀더 진득하게(?)
+1. 심층 스캔(Deep Scan) 로직 고도화 및 정밀도 향상
+2. HTTP 프록시 서버 모드 추가 (Passive Analysis 강화)
+3. Interactive 모드 내 리피터(Repeater) 기능 구현
+
+## Known Limitations
+1. **GET Parameter Only**: 현재 스캐너는 URL 쿼리 스트링(GET 파라미터)에 대해서만 인젝션 점검을 수행합니다. POST Body(로그인 폼 등)에 대한 자동 퍼징은 지원하지 않습니다.
+2. **Error-Based SQLi Focus**: SQL Injection 점검은 주로 DB 에러 메시지 노출 여부를 확인합니다. 에러가 억제된 경우(Boolean-based) 탐지되지 않을 수 있습니다.
+3. **Active Mode Required**: 인젝션 및 XSS 점검은 `--active` 옵션을 켜야만 동작합니다.

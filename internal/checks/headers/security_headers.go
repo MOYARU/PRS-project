@@ -22,14 +22,14 @@ func CheckSecurityHeaders(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	headers := ctx.Response.Header
 	var findings []report.Finding
 
-	findings = append(findings, missingHeader(headers, "CONTENT_SECURITY_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityMedium)...)
-	findings = append(findings, missingHeader(headers, "X_FRAME_OPTIONS_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
-	findings = append(findings, missingHeader(headers, "X_CONTENT_TYPE_OPTIONS_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
-	findings = append(findings, missingHeader(headers, "REFERRER_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
-	findings = append(findings, missingHeader(headers, "PERMISSIONS_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
-	findings = append(findings, missingHeader(headers, "CROSS_ORIGIN_OPENER_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
-	findings = append(findings, missingHeader(headers, "CROSS_ORIGIN_EMBEDDER_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
-	findings = append(findings, missingHeader(headers, "CROSS_ORIGIN_RESOURCE_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
+	findings = append(findings, missingHeader(headers, "Content-Security-Policy", "CONTENT_SECURITY_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityMedium)...)
+	findings = append(findings, missingHeader(headers, "X-Frame-Options", "X_FRAME_OPTIONS_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
+	findings = append(findings, missingHeader(headers, "X-Content-Type-Options", "X_CONTENT_TYPE_OPTIONS_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
+	findings = append(findings, missingHeader(headers, "Referrer-Policy", "REFERRER_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
+	findings = append(findings, missingHeader(headers, "Permissions-Policy", "PERMISSIONS_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
+	findings = append(findings, missingHeader(headers, "Cross-Origin-Opener-Policy", "CROSS_ORIGIN_OPENER_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
+	findings = append(findings, missingHeader(headers, "Cross-Origin-Embedder-Policy", "CROSS_ORIGIN_EMBEDDER_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
+	findings = append(findings, missingHeader(headers, "Cross-Origin-Resource-Policy", "CROSS_ORIGIN_RESOURCE_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
 
 	findings = append(findings, checkHSTS(ctx, headers)...)
 	findings = append(findings, checkCookieFlags(ctx.Response)...)
@@ -38,18 +38,7 @@ func CheckSecurityHeaders(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	return findings, nil
 }
 
-func missingHeader(headers http.Header, msgID string, category checks.Category, severity report.Severity) []report.Finding {
-
-	headerName := strings.ReplaceAll(strings.ToLower(msgID), "_MISSING", "")
-	headerName = strings.ReplaceAll(headerName, "_", "-")
-	headerName = strings.Replace(headerName, "content-security-policy", "Content-Security-Policy", 1) // Specific capitalization
-	headerName = strings.Replace(headerName, "x-frame-options", "X-Frame-Options", 1)
-	headerName = strings.Replace(headerName, "x-content-type-options", "X-Content-Type-Options", 1)
-	headerName = strings.Replace(headerName, "referrer-policy", "Referrer-Policy", 1)
-	headerName = strings.Replace(headerName, "permissions-policy", "Permissions-Policy", 1)
-	headerName = strings.Replace(headerName, "cross-origin-opener-policy", "Cross-Origin-Opener-Policy", 1)
-	headerName = strings.Replace(headerName, "cross-origin-embedder-policy", "Cross-Origin-Embedder-Policy", 1)
-	headerName = strings.Replace(headerName, "cross-origin-resource-policy", "Cross-Origin-Resource-Policy", 1)
+func missingHeader(headers http.Header, headerName, msgID string, category checks.Category, severity report.Severity) []report.Finding {
 
 	if headers.Get(headerName) != "" {
 		return nil

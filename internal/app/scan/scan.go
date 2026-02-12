@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/MOYARU/PRS-project/internal/app/output"
@@ -17,6 +18,11 @@ import (
 )
 
 func RunScan(target string, activeScan bool, crawl bool, depth int, jsonOutput bool, htmlOutput bool, delay int) error {
+	// Normalize target URL: Add http:// scheme if missing (supports IP addresses and domains)
+	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+		target = "http://" + target
+	}
+
 	// Setup context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -91,8 +97,23 @@ func RunScan(target string, activeScan bool, crawl bool, depth int, jsonOutput b
 	}
 
 	var allFindings []report.Finding
-	allPerformedChecks := make(map[string]bool)
+	// Track unique findings per check to calculate counts correctly
+	checkUniqueFindings := make(map[string]map[string]bool) // CheckID -> Set of (ID|Message)
+	checksRan := make(map[string]bool)
+
 	startTime := time.Now()
+
+	type findingKey struct {
+		ID      string
+		Message string
+	}
+	type findingInfo struct {
+		Finding report.Finding
+		URLs    []string
+		CheckID string
+	}
+	aggregatedFindings := make(map[findingKey]*findingInfo)
+	var findingKeys []findingKey
 
 	for i, t := range targets {
 		if ctx.Err() != nil {
@@ -104,28 +125,68 @@ func RunScan(target string, activeScan bool, crawl bool, depth int, jsonOutput b
 			fmt.Printf("%s%s%s\n", ui.ColorRed, msges.GetUIMessage("ScannerInitFailed", t, err), ui.ColorReset)
 			continue
 		}
-		findings, performedChecks, err := scn.Run(ctx) // Pass context
+		resultsByCheck, err := scn.Run(ctx) // Pass context
 		if err != nil {
 			fmt.Printf("%s%s%s\n", ui.ColorRed, msges.GetUIMessage("ScanFailed", t, err), ui.ColorReset)
 			continue
 		}
-		allFindings = append(allFindings, findings...)
 
-		// Merge performed checks logic to accumulate results across multiple targets
-		for id, found := range performedChecks {
-			if found {
-				allPerformedChecks[id] = true
-			} else if _, exists := allPerformedChecks[id]; !exists {
-				allPerformedChecks[id] = false
+		for checkID, findings := range resultsByCheck {
+			checksRan[checkID] = true
+			if checkUniqueFindings[checkID] == nil {
+				checkUniqueFindings[checkID] = make(map[string]bool)
 			}
+
+			for _, f := range findings {
+				// Global aggregation
+				k := findingKey{ID: f.ID, Message: f.Message}
+				if _, exists := aggregatedFindings[k]; !exists {
+					aggregatedFindings[k] = &findingInfo{Finding: f, URLs: []string{}, CheckID: checkID}
+					findingKeys = append(findingKeys, k)
+				}
+				aggregatedFindings[k].URLs = append(aggregatedFindings[k].URLs, t)
+
+				// Per-check unique counting
+				uniqueKey := f.ID + "|" + f.Message
+				checkUniqueFindings[checkID][uniqueKey] = true
+			}
+		}
+	}
+
+	findingsByCheck := make(map[string][]report.Finding)
+	for _, k := range findingKeys {
+		info := aggregatedFindings[k]
+		f := info.Finding
+
+		uniqueURLs := make([]string, 0, len(info.URLs))
+		seenURLs := make(map[string]bool)
+		for _, u := range info.URLs {
+			if !seenURLs[u] {
+				seenURLs[u] = true
+				uniqueURLs = append(uniqueURLs, u)
+			}
+		}
+
+		if len(uniqueURLs) > 0 {
+			f.Message += "\n\nPRS_AFFECTED_URLS_SEPARATOR\n" + strings.Join(uniqueURLs, "\n")
+		}
+		allFindings = append(allFindings, f)
+		if info.CheckID != "" {
+			findingsByCheck[info.CheckID] = append(findingsByCheck[info.CheckID], f)
 		}
 	}
 
 	endTime := time.Now()
 	fmt.Printf("\n%s%s%s\n", ui.ColorGreen, msges.GetUIMessage("AllScansCompleted"), ui.ColorReset)
 
+	// Calculate final counts per check
+	checkCounts := make(map[string]int)
+	for id, uniqueSet := range checkUniqueFindings {
+		checkCounts[id] = len(uniqueSet)
+	}
+
 	output.PrintFindings(allFindings)
-	output.PrintScanSummary(allPerformedChecks, allFindings)
+	output.PrintScanSummary(checkCounts, checksRan, findingsByCheck)
 
 	if jsonOutput {
 		if err := output.SaveJSONReport(target, targets, allFindings, startTime, endTime); err != nil {

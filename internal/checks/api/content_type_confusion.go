@@ -1,14 +1,14 @@
 package api
 
 import (
-	"bytes"
-	"encoding/json"
-
+	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/MOYARU/PRS-project/internal/checks"
 	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context"
+	"github.com/MOYARU/PRS-project/internal/engine"
 	msges "github.com/MOYARU/PRS-project/internal/messages"
 	"github.com/MOYARU/PRS-project/internal/report"
 )
@@ -21,10 +21,7 @@ func CheckContentTypeConfusion(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	}
 
 	if strings.Contains(ctx.Response.Header.Get("Content-Type"), "application/json") {
-		dummyJSON := map[string]string{"test": "value"}
-		jsonBody, _ := json.Marshal(dummyJSON)
-
-		req, err := http.NewRequest("POST", ctx.FinalURL.String(), bytes.NewReader(jsonBody))
+		req, err := http.NewRequest("POST", ctx.FinalURL.String(), strings.NewReader(`{"test":"value"}`))
 		if err != nil {
 			return findings, err
 		}
@@ -79,5 +76,59 @@ func CheckContentTypeConfusion(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		})
 	}
 
+	// Check 3: JSONP enabled
+	findings = append(findings, checkJSONP(ctx)...)
+
 	return findings, nil
+}
+
+// checkJSONP detects if an endpoint supports JSONP callbacks.
+func checkJSONP(ctx *ctxpkg.Context) []report.Finding {
+	var findings []report.Finding
+	canary := "prs_jsonp_canary"
+	paramNames := []string{"callback", "jsonp"}
+
+	u, err := url.Parse(ctx.FinalURL.String())
+	if err != nil {
+		return findings
+	}
+
+	for _, paramName := range paramNames {
+		// Create a copy of the query parameters
+		q := u.Query()
+		// Set the JSONP callback parameter
+		q.Set(paramName, canary)
+		u.RawQuery = q.Encode()
+
+		req, err := http.NewRequest("GET", u.String(), nil)
+		if err != nil {
+			continue
+		}
+
+		resp, err := ctx.HTTPClient.Do(req)
+		if err != nil {
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK {
+			bodyBytes, _ := engine.DecodeResponseBody(resp)
+			bodyString := string(bodyBytes)
+
+			// Check if the response is wrapped in the canary function
+			if strings.HasPrefix(bodyString, canary+"(") && (strings.HasSuffix(bodyString, ")") || strings.HasSuffix(bodyString, ");")) {
+				msg := msges.GetMessage("JSONP_ENABLED")
+				findings = append(findings, report.Finding{
+					ID:       "JSONP_ENABLED",
+					Category: string(checks.CategoryAPISecurity),
+					Severity: report.SeverityMedium,
+					Title:    msg.Title,
+					Message:  fmt.Sprintf(msg.Message, paramName),
+					Fix:      msg.Fix,
+				})
+				return findings // Found it, no need to check other param names
+			}
+		}
+	}
+	return findings
 }

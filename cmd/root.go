@@ -11,11 +11,12 @@ import (
 	"github.com/MOYARU/PRS-project/internal/app/interactive"
 	"github.com/MOYARU/PRS-project/internal/app/scan"
 	"github.com/MOYARU/PRS-project/internal/app/ui"
+	msges "github.com/MOYARU/PRS-project/internal/messages"
 	"github.com/spf13/cobra"
 )
 
 var (
-	version = "1.5.0"
+	version = "1.6.0"
 
 	activeScan bool
 	jsonOutput bool
@@ -34,7 +35,18 @@ var rootCmd = &cobra.Command{
 			interactive.RunInteractiveMode(cmd)
 		} else {
 			target := args[0]
-			err := scan.RunScan(target, activeScan, crawl, depth, jsonOutput, htmlOutput, delay)
+
+			// Crawler is always enabled
+			crawl = true
+
+			// Ask for HTML report interactively
+			var err error
+			htmlOutput, err = ui.Confirm(msges.GetUIMessage("AskSaveHTML"))
+			if err != nil {
+				return
+			}
+
+			err = scan.RunScan(target, activeScan, crawl, depth, jsonOutput, htmlOutput, delay)
 			if err != nil {
 				fmt.Printf("%sScan failed: %v%s\n", ui.ColorRed, err, ui.ColorReset)
 				os.Exit(1)
@@ -52,8 +64,6 @@ func Execute() {
 func init() {
 	rootCmd.Flags().BoolVar(&activeScan, "active", false, "Enable active scan (disabled by default)")
 	rootCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output result as JSON")
-	rootCmd.Flags().BoolVar(&htmlOutput, "html", false, "Output result as HTML")
-	rootCmd.Flags().BoolVar(&crawl, "crawler", false, "Enable crawling to discover more pages")
 	rootCmd.Flags().IntVar(&depth, "depth", 2, "Crawling depth (default: 2)")
 	rootCmd.Flags().IntVar(&delay, "delay", 0, "Delay between requests in milliseconds (e.g., 500)")
 
@@ -66,15 +76,13 @@ Usage:
 
 Example:
   prs https://example.com
-  prs https://example.com --crawler --depth 3
+  prs https://example.com --depth 3
   prs https://example.com --active
 
 Flags:
   --active             Enable active scan (disabled by default)
-  --crawler            Enable crawling to discover more pages
   --depth              Crawling depth (default: 2)
-  --json               Output result as JSON (not yet implemented)
-  --html               Output result as HTML
+  --json               Output result as JSON
   --delay              Delay between requests in milliseconds
 
 This tool is intended for ethical hacking and security testing on assets you own or have explicit permission to test.

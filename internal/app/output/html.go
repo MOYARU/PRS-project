@@ -4,11 +4,19 @@ import (
 	"fmt"
 	"html/template"
 	"os"
+	"sort"
+	"strings"
 	"time"
 
 	msges "github.com/MOYARU/PRS-project/internal/messages"
 	"github.com/MOYARU/PRS-project/internal/report"
 )
+
+type TemplateFinding struct {
+	report.Finding
+	Description  string
+	AffectedURLs []string
+}
 
 // HTML report
 type HTMLReportData struct {
@@ -21,7 +29,7 @@ type HTMLReportData struct {
 	MediumCount int
 	LowCount    int
 	InfoCount   int
-	Findings    []report.Finding
+	Findings    []TemplateFinding
 
 	UITitle              string
 	UITarget             string
@@ -48,13 +56,24 @@ func SaveHTMLReport(target string, scannedURLs []string, findings []report.Findi
 	}
 	defer f.Close()
 
-	// Localize UI strings
-	for i := range findings {
-		msg := msges.GetMessage(findings[i].ID)
-		if msg.Title != "Message Not Found" {
-			findings[i].Title = msg.Title
-			findings[i].Message = msg.Message
-			findings[i].Fix = msg.Fix
+	// Sort findings by severity (High -> Medium -> Low -> Info)
+	sort.Slice(findings, func(i, j int) bool {
+		return severityWeight(findings[i].Severity) > severityWeight(findings[j].Severity)
+	})
+
+	templateFindings := make([]TemplateFinding, len(findings))
+	for i, f := range findings {
+		desc := f.Message
+		var urls []string
+		if strings.Contains(f.Message, "\n\nPRS_AFFECTED_URLS_SEPARATOR\n") {
+			parts := strings.SplitN(f.Message, "\n\nPRS_AFFECTED_URLS_SEPARATOR\n", 2)
+			desc = parts[0]
+			urls = strings.Split(parts[1], "\n")
+		}
+		templateFindings[i] = TemplateFinding{
+			Finding:      f,
+			Description:  desc,
+			AffectedURLs: urls,
 		}
 	}
 
@@ -63,7 +82,7 @@ func SaveHTMLReport(target string, scannedURLs []string, findings []report.Findi
 		ScannedURLs:          scannedURLs,
 		ScanTime:             startTime.Format("2006-01-02 15:04:05"),
 		Duration:             endTime.Sub(startTime).String(),
-		Findings:             findings,
+		Findings:             templateFindings,
 		UITitle:              msges.GetUIMessage("HTMLReportTitle"),
 		UITarget:             msges.GetUIMessage("HTMLTarget"),
 		UIScanTime:           msges.GetUIMessage("HTMLScanTime"),
@@ -79,7 +98,7 @@ func SaveHTMLReport(target string, scannedURLs []string, findings []report.Findi
 		UIManualVerification: msges.GetUIMessage("UIManualVerification"),
 	}
 
-	for _, f := range findings {
+	for _, f := range templateFindings {
 		switch f.Severity {
 		case report.SeverityHigh:
 			data.HighCount++
@@ -91,7 +110,7 @@ func SaveHTMLReport(target string, scannedURLs []string, findings []report.Findi
 			data.InfoCount++
 		}
 	}
-	data.TotalIssues = len(findings)
+	data.TotalIssues = len(templateFindings)
 
 	t, err := template.New("report").Parse(htmlTemplate)
 	if err != nil {
@@ -143,6 +162,10 @@ const htmlTemplate = `
         .fix-box { background-color: #e8f5e9; padding: 15px; border-radius: 6px; border-left: 5px solid #4caf50; margin-top: 15px; }
         .fix-title { font-weight: bold; color: #2e7d32; display: block; margin-bottom: 5px; font-size: 1.05em; }
         .fix-content { color: #1b5e20; }
+        .affected-urls-box { background-color: #e3f2fd; padding: 15px; border-radius: 6px; border-left: 5px solid #2196f3; margin-top: 15px; }
+        .affected-urls-title { font-weight: bold; color: #1565c0; display: block; margin-bottom: 5px; font-size: 1.05em; }
+        .affected-urls-list { list-style-type: none; padding: 0; margin: 0; font-family: monospace; font-size: 0.9em; word-break: break-all; }
+        .affected-urls-list li { padding: 2px 0; }
         .scope-container { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
         .scope-list { max-height: 200px; overflow-y: auto; background: #f8f9fa; padding: 10px; border-radius: 4px; border: 1px solid #eee; }
         .scope-list ul { list-style-type: none; padding: 0; margin: 0; }
@@ -190,11 +213,21 @@ const htmlTemplate = `
         </div>
         <div class="details">
             <p><span class="label">Category:</span> {{.Category}}</p>
-            <p><span class="label">Description:</span> {{.Message}}</p>
+            <p><span class="label">Description:</span> {{.Description}}</p>
             <div class="fix-box">
                 <span class="fix-title">Fix: {{$.UIRecommendation}}</span>
                 <div class="fix-content">{{.Fix}}</div>
             </div>
+            {{if .AffectedURLs}}
+            <div class="affected-urls-box">
+                <span class="affected-urls-title">Affected URLs</span>
+                <ul class="affected-urls-list">
+                {{range .AffectedURLs}}
+                    <li>{{.}}</li>
+                {{end}}
+                </ul>
+            </div>
+            {{end}}
             {{if .IsPotentiallyFalsePositive}}
             <p style="color: #e67e22;">{{$.UIManualVerification}}</p>
             {{end}}

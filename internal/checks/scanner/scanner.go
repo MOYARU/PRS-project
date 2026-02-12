@@ -50,15 +50,15 @@ func New(target string, mode ctxpkg.ScanMode, delay time.Duration) (*Scanner, er
 	}, nil
 }
 
-func (s *Scanner) Run(ctx context.Context) ([]report.Finding, map[string]bool, error) {
+func (s *Scanner) Run(ctx context.Context) (map[string][]report.Finding, error) {
 	resp, err := s.client.Do(s.baseURL)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	bodyBytes, err := engine.DecodeResponseBody(resp)
 	if err != nil {
 		resp.Body.Close()
-		return nil, nil, fmt.Errorf("failed to decode response body: %w", err)
+		return nil, fmt.Errorf("failed to decode response body: %w", err)
 	}
 	defer resp.Body.Close() // Close the original response body after reading
 
@@ -84,9 +84,7 @@ func (s *Scanner) Run(ctx context.Context) ([]report.Finding, map[string]bool, e
 		HTTPClient:        s.client,
 	}
 
-	var findings []report.Finding
-	seen := make(map[string]bool)
-	performedChecks := make(map[string]bool)
+	resultsByCheck := make(map[string][]report.Finding)
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -107,7 +105,7 @@ func (s *Scanner) Run(ctx context.Context) ([]report.Finding, map[string]bool, e
 	for _, check := range checksToRun {
 		select {
 		case <-ctx.Done():
-			return findings, performedChecks, ctx.Err()
+			return resultsByCheck, ctx.Err()
 		default:
 		}
 
@@ -143,14 +141,7 @@ func (s *Scanner) Run(ctx context.Context) ([]report.Finding, map[string]bool, e
 				return
 			}
 
-			performedChecks[c.ID] = true
-
-			for _, f := range results {
-				if _, ok := seen[f.ID]; !ok {
-					findings = append(findings, f)
-					seen[f.ID] = true
-				}
-			}
+			resultsByCheck[c.ID] = results
 		}(check)
 	}
 	wg.Wait()
@@ -158,9 +149,22 @@ func (s *Scanner) Run(ctx context.Context) ([]report.Finding, map[string]bool, e
 	// Final 100% Bar
 	fmt.Printf("\r [%s] 100%% | %s             \n", strings.Repeat("█", barWidth), msges.GetUIMessage("ScanCompleteMsg"))
 
-	s.printSummary(findings)
+	// Flatten findings for local summary (deduplicated)
+	var allFindings []report.Finding
+	seen := make(map[string]bool)
+	for _, findings := range resultsByCheck {
+		for _, f := range findings {
+			key := f.ID + "|" + f.Message
+			if !seen[key] {
+				allFindings = append(allFindings, f)
+				seen[key] = true
+			}
+		}
+	}
 
-	return findings, performedChecks, nil
+	s.printSummary(allFindings)
+
+	return resultsByCheck, nil
 }
 
 func (s *Scanner) printSummary(findings []report.Finding) {

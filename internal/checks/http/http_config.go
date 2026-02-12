@@ -1,12 +1,11 @@
 package http
 
 import (
+	"crypto/rand"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/MOYARU/PRS-project/internal/checks"
 	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context"
@@ -111,6 +110,12 @@ func checkPUTDELETEMethods(ctx *ctxpkg.Context) []report.Finding {
 	var findings []report.Finding
 	testURL := ctx.FinalURL.String() + "/prs_test_file_" + generateRandomString(10) // Use a random file name
 
+	// Ensure cleanup of the test file
+	defer func() {
+		cleanupReq, _ := http.NewRequest("DELETE", testURL, nil)
+		ctx.HTTPClient.Do(cleanupReq)
+	}()
+
 	// Test PUT
 	putReq, err := http.NewRequest("PUT", testURL, strings.NewReader("test_content"))
 	if err != nil {
@@ -159,10 +164,12 @@ func checkPUTDELETEMethods(ctx *ctxpkg.Context) []report.Finding {
 // generateRandomString generates a random string of specified length.
 func generateRandomString(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	b := make([]byte, length)
+	if _, err := rand.Read(b); err != nil {
+		return "fallback"
+	}
 	for i := range b {
-		b[i] = charset[r.Intn(len(charset))] // rand is not cryptographically secure, but fine for file names
+		b[i] = charset[int(b[i])%len(charset)]
 	}
 	return string(b)
 }

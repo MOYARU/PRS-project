@@ -1,6 +1,9 @@
 package messages
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+)
 
 type Language int
 
@@ -9,9 +12,14 @@ const (
 	LangEN
 )
 
-var CurrentLanguage = LangKO
+var (
+	CurrentLanguage = LangKO
+	langMu          sync.RWMutex
+)
 
 func SetLanguage(l Language) {
+	langMu.Lock()
+	defer langMu.Unlock()
 	CurrentLanguage = l
 }
 
@@ -628,13 +636,30 @@ var findingMessages = map[string]rawMessageDetail{
 		IsPotentiallyFalsePositive: false,
 	},
 	"JSON_UNEXPECTED_FIELD_INSERTION": {
-		TitleKO:                    "JSON 예상 외 필드 삽입 점검 (TODO)",
-		TitleEN:                    "JSON Unexpected Field Insertion Check (TODO)",
+		TitleKO:                    "JSON 예상 외 필드 삽입 점검",
+		TitleEN:                    "JSON Unexpected Field Insertion Check",
 		MessageKO:                  "JSON 요청에 예상되지 않은 필드를 삽입했을 때의 애플리케이션 처리 로직 검증이 필요합니다.",
 		MessageEN:                  "Verification of application logic when unexpected fields are inserted into JSON requests is needed.",
 		FixKO:                      "JSON 요청 처리 시 허용된 필드만 파싱하고, 예상되지 않은 필드는 무시하거나 오류를 반환하도록 구성하십시오.",
 		FixEN:                      "Parse only allowed fields in JSON requests and ignore or return error for unexpected fields.",
 		IsPotentiallyFalsePositive: true,
+	},
+	"JSONP_ENABLED": {
+		TitleKO:   "JSONP 엔드포인트 활성화",
+		TitleEN:   "JSONP Endpoint Enabled",
+		MessageKO: "URL 파라미터('%s')를 통해 JSONP 응답이 활성화되어 있습니다. 이는 동일-출처 정책(SOP)을 우회하여 다른 도메인에서 데이터를 탈취하는 데 사용될 수 있습니다.",
+		MessageEN: "JSONP response is enabled via the '%s' URL parameter. This can be used to bypass the Same-Origin Policy and steal data from other domains.",
+		FixKO:     "JSONP 사용을 중단하고 CORS(Cross-Origin Resource Sharing)를 사용하여 API를 제공하십시오. JSONP가 반드시 필요한 경우, 콜백 함수 이름에 대한 엄격한 화이트리스트 검증을 구현하여 임의의 코드 실행을 방지해야 합니다.",
+		FixEN:     "Discontinue using JSONP and use CORS (Cross-Origin Resource Sharing) to provide the API. If JSONP is essential, implement strict whitelist validation for callback function names to prevent arbitrary code execution.",
+	},
+	"XXE_DETECTED": {
+		TitleKO:                    "XXE (XML External Entity) 취약점 감지",
+		TitleEN:                    "XXE (XML External Entity) Vulnerability Detected",
+		MessageKO:                  "XML 파서가 외부 엔티티를 처리하도록 설정되어 있습니다. 이는 로컬 파일 유출이나 SSRF 공격으로 이어질 수 있습니다. (반사된 값: %s)",
+		MessageEN:                  "XML parser is configured to process external entities. This can lead to local file disclosure or SSRF attacks. (Reflected: %s)",
+		FixKO:                      "XML 파서 설정에서 DTD(Document Type Definition) 및 외부 엔티티 처리를 비활성화하십시오.",
+		FixEN:                      "Disable DTD (Document Type Definition) and external entity processing in the XML parser configuration.",
+		IsPotentiallyFalsePositive: false,
 	},
 	"PARAMETER_POLLUTION_DETECTED": {
 		TitleKO:                    "파라미터 오염 (Parameter Pollution) 감지",
@@ -735,6 +760,60 @@ var findingMessages = map[string]rawMessageDetail{
 		FixEN:                      "Update software and libraries to latest patched versions and disable unnecessary version info exposure in settings.",
 		IsPotentiallyFalsePositive: false,
 	},
+	"SSTI_DETECTED": {
+		TitleKO:                    "SSTI (Server-Side Template Injection) 감지",
+		TitleEN:                    "SSTI (Server-Side Template Injection) Detected",
+		MessageKO:                  "파라미터 '%s'에 템플릿 구문을 주입했을 때 서버에서 연산된 결과('49')가 반환되었습니다. 이는 원격 코드 실행(RCE)으로 이어질 수 있는 치명적인 취약점입니다.",
+		MessageEN:                  "Server returned evaluated result ('49') when injecting template syntax into parameter '%s'. This is a critical vulnerability leading to RCE.",
+		FixKO:                      "사용자 입력을 템플릿 엔진에 직접 연결하지 말고, 템플릿 엔진이 제공하는 파라미터 바인딩 기능을 사용하거나 입력을 엄격하게 검증하십시오.",
+		FixEN:                      "Do not concatenate user input directly into templates. Use parameter binding provided by the template engine or strictly validate input.",
+		IsPotentiallyFalsePositive: false,
+	},
+	"OPEN_REDIRECT_DETECTED": {
+		TitleKO:                    "Open Redirect 취약점 감지",
+		TitleEN:                    "Open Redirect Detected",
+		MessageKO:                  "파라미터 '%s'를 통해 임의의 외부 도메인('%s')으로 리다이렉트가 가능합니다. 이는 피싱 공격에 악용될 수 있습니다.",
+		MessageEN:                  "Redirect to arbitrary external domain ('%s') is possible via parameter '%s'. This can be abused for phishing attacks.",
+		FixKO:                      "리다이렉트 대상 URL을 화이트리스트로 관리하거나, 사용자 입력값을 기반으로 리다이렉트하지 않도록 하십시오.",
+		FixEN:                      "Whitelist redirect target URLs or avoid redirecting based on user input.",
+		IsPotentiallyFalsePositive: false,
+	},
+	"BACKUP_FILE_EXPOSED": {
+		TitleKO:                    "백업/임시 파일 노출",
+		TitleEN:                    "Backup/Temporary File Exposed",
+		MessageKO:                  "민감한 백업 또는 임시 파일 '%s'가 외부에 노출되어 소스코드나 설정 정보가 유출될 수 있습니다.",
+		MessageEN:                  "Sensitive backup or temporary file '%s' is exposed, potentially leaking source code or configuration.",
+		FixKO:                      "웹 서버 설정에서 .bak, .old, .swp 등의 확장자를 가진 파일에 대한 접근을 차단하고, 불필요한 파일은 삭제하십시오.",
+		FixEN:                      "Configure web server to block access to files with extensions like .bak, .old, .swp, and remove unnecessary files.",
+		IsPotentiallyFalsePositive: false,
+	},
+	"SENSITIVE_API_KEY_FOUND": {
+		TitleKO:                    "민감한 API 키 또는 토큰 발견",
+		TitleEN:                    "Sensitive API Key or Token Found",
+		MessageKO:                  "자바스크립트 파일 또는 HTML 내에서 민감한 API 키/토큰 패턴이 발견되었습니다. (%s: %s)",
+		MessageEN:                  "Sensitive API key/token pattern found in JavaScript or HTML. (%s: %s)",
+		FixKO:                      "API 키가 클라이언트 측 코드에 노출되지 않도록 하십시오. 필요한 경우 환경 변수나 백엔드 프록시를 사용해야 합니다.",
+		FixEN:                      "Ensure API keys are not exposed in client-side code. Use environment variables or backend proxies if necessary.",
+		IsPotentiallyFalsePositive: true,
+	},
+	"CONSOLE_LOG_EXPOSED": {
+		TitleKO:                    "디버깅 로그(console.log) 노출",
+		TitleEN:                    "Debugging Log (console.log) Exposed",
+		MessageKO:                  "소스코드에서 'console.log' 등 디버깅용 코드가 발견되었습니다. 중요 정보가 브라우저 콘솔에 노출될 수 있습니다. (패턴: %s)",
+		MessageEN:                  "Debugging code like 'console.log' found. Sensitive info may be exposed in browser console. (Pattern: %s)",
+		FixKO:                      "운영 배포 시에는 모든 'console.*' 코드를 제거하십시오.",
+		FixEN:                      "Remove all 'console.*' codes in production.",
+		IsPotentiallyFalsePositive: true,
+	},
+	"SQL_INJECTION_ERROR_BASED": {
+		TitleKO:                    "SQL Injection (Error-based) 취약점",
+		TitleEN:                    "SQL Injection (Error-based) Vulnerability",
+		MessageKO:                  "파라미터 '%s'에 SQL 구문 삽입 시 데이터베이스 에러 메시지가 반환되었습니다. (Payload: %s) 이는 애플리케이션이 사용자 입력을 쿼리에 직접 연결하고 있음을 나타냅니다.",
+		MessageEN:                  "Database error message returned when injecting SQL syntax into parameter '%s'. (Payload: %s) This indicates the application concatenates user input directly into queries.",
+		FixKO:                      "1. Prepared Statement 사용: 모든 데이터베이스 쿼리에 파라미터화된 쿼리(Parameterized Query)를 사용하여 사용자 입력값이 SQL 코드로 해석되지 않도록 하십시오.\n2. 입력값 검증: 입력값의 타입, 길이, 형식을 엄격하게 검증하십시오.\n3. 에러 메시지 노출 금지: 데이터베이스 에러 메시지가 사용자에게 직접 노출되지 않도록 예외 처리를 설정하고, 일반적인 에러 페이지를 보여주도록 구성하십시오.",
+		FixEN:                      "1. Use Prepared Statements: Use parameterized queries for all DB operations.\n2. Input Validation: Strictly validate input type, length, and format.\n3. Suppress Error Messages: Configure exception handling to prevent exposing DB errors to users.",
+		IsPotentiallyFalsePositive: false,
+	},
 	"NETWORK_TRANSPORT_SECURITY": {
 		TitleKO: "네트워크 전송 보안 기본 점검",
 		TitleEN: "Network Transport Security Check",
@@ -796,8 +875,13 @@ var findingMessages = map[string]rawMessageDetail{
 		TitleEN: "SQL Injection Check",
 	},
 	"REFLECTED_XSS": {
-		TitleKO: "Reflected XSS 점검",
-		TitleEN: "Reflected XSS Check",
+		TitleKO:                    "Reflected XSS (반사형 크로스 사이트 스크립팅) 취약점",
+		TitleEN:                    "Reflected XSS Vulnerability",
+		MessageKO:                  "파라미터 '%s'를 통해 주입된 스크립트 코드가 사용자 입력값 검증 없이 응답 페이지에 그대로 반사되어 실행됩니다. 공격자는 이를 통해 세션 탈취, 악성 사이트 리다이렉트 등을 수행할 수 있습니다.",
+		MessageEN:                  "Script code injected via parameter '%s' is reflected and executed in the response page without validation. Attackers can use this to steal sessions or redirect users.",
+		FixKO:                      "1. 입력값 검증 및 인코딩: 사용자로부터 입력받은 모든 데이터를 신뢰하지 말고, 출력 시 HTML 엔티티 인코딩(Escaping)을 적용해야 합니다. (예: < -> &lt;, > -> &gt;, & -> &amp;, \" -> &quot;, ' -> &#x27;)\n2. 보안 라이브러리 사용: 사용하는 프레임워크(React, Vue, Spring 등)에서 제공하는 XSS 방어 메커니즘을 활용하십시오.\n3. CSP(Content Security Policy) 적용: 응답 헤더에 CSP를 설정하여 승인되지 않은 스크립트의 실행을 차단하십시오.",
+		FixEN:                      "1. Input/Output Encoding: Escape user input as HTML entities (e.g., < -> &lt;). \n2. Use Security Libraries: Utilize framework XSS protection features.\n3. Apply CSP: Set Content-Security-Policy headers to block unauthorized scripts.",
+		IsPotentiallyFalsePositive: false,
 	},
 	"BLIND_SQL_INJECTION": {
 		TitleKO: "블라인드 SQL Injection 점검 (시간 기반)",
@@ -1020,7 +1104,7 @@ var uiMessages = map[string]map[Language]string{
 		LangEN: "Failed to save HTML report: %v",
 	},
 	"InteractiveWelcome": {
-		LangKO: "PRS 인터랙티브 모드에 오신 것을 환영합니다. 'help'를 입력하여 명령어를 확인하세요.",
+		LangKO: "PRS에 오신 것을 환영합니다. 'help'를 입력하여 명령어를 확인하세요.",
 		LangEN: "Welcome to PRS Interactive Mode. Type 'help' for commands.",
 	},
 	"InteractiveExit": {
@@ -1043,12 +1127,20 @@ var uiMessages = map[string]map[Language]string{
 		LangKO: "알 수 없는 명령어: %s. 'help'를 입력해보세요.",
 		LangEN: "Unknown command: %s. Type 'help'.",
 	},
+	"AskSaveHTML": {
+		LangKO: "스캔이 종료된 후 HTML 리포트를 저장하시겠습니까?",
+		LangEN: "Do you want to save the HTML report?",
+	},
 }
 
 // 기본값은 MessageDetail의 필드가 비어있는 상태
 func GetMessage(id string) MessageDetail {
+	langMu.RLock()
+	lang := CurrentLanguage
+	langMu.RUnlock()
+
 	if msg, ok := findingMessages[id]; ok {
-		if CurrentLanguage == LangEN {
+		if lang == LangEN {
 			return MessageDetail{
 				Title:                      msg.TitleEN,
 				Message:                    msg.MessageEN,
@@ -1072,8 +1164,12 @@ func GetMessage(id string) MessageDetail {
 }
 
 func GetUIMessage(id string, args ...interface{}) string {
+	langMu.RLock()
+	lang := CurrentLanguage
+	langMu.RUnlock()
+
 	if msgs, ok := uiMessages[id]; ok {
-		format, ok := msgs[CurrentLanguage]
+		format, ok := msgs[lang]
 		if !ok {
 			format = msgs[LangEN]
 		}

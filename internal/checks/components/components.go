@@ -11,6 +11,8 @@ import (
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
+var commentRegex = regexp.MustCompile(`<!--.*?v?(\d+\.\d+(\.\d+)?).*?-->`)
+
 func CheckVulnerableComponents(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 
@@ -28,7 +30,6 @@ func CheckVulnerableComponents(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	}
 
 	bodyString := string(ctx.BodyBytes)
-	commentRegex := regexp.MustCompile(`<!--.*?v?(\d+\.\d+(\.\d+)?).*?-->`)
 	matches := commentRegex.FindAllStringSubmatch(bodyString, -1)
 
 	for _, match := range matches {

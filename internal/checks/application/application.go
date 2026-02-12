@@ -31,6 +31,7 @@ func CheckApplicationSecurity(ctx *ctxpkg.Context) ([]report.Finding, error) {
 
 	if ctx.Mode == ctxpkg.Active {
 		findings = append(findings, checkGraphQLIntrospection(ctx)...)
+		findings = append(findings, checkOpenRedirect(ctx)...)
 	}
 
 	return findings, nil
@@ -274,6 +275,60 @@ func checkGraphQLIntrospection(ctx *ctxpkg.Context) []report.Finding {
 	return findings
 
 	// TODO 의 흔적
+}
+
+func checkOpenRedirect(ctx *ctxpkg.Context) []report.Finding {
+	var findings []report.Finding
+
+	targetDomain := "example.com"
+	payloads := []string{
+		"http://" + targetDomain,
+		"//" + targetDomain,
+		"/\\" + targetDomain,
+	}
+
+	u, _ := url.Parse(ctx.FinalURL.String())
+	queryParams := u.Query()
+
+	for param := range queryParams {
+		for _, payload := range payloads {
+			newParams := url.Values{}
+			for k, v := range queryParams {
+				newParams[k] = v
+			}
+			newParams.Set(param, payload)
+			u.RawQuery = newParams.Encode()
+
+			req, err := http.NewRequest("GET", u.String(), nil)
+			if err != nil {
+				continue
+			}
+
+			// Don't follow redirects automatically to check the Location header
+			client := engine.NewHTTPClient(false, nil)
+			resp, err := client.Do(req)
+			if err != nil {
+				continue
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+				loc := resp.Header.Get("Location")
+				if strings.Contains(loc, targetDomain) {
+					msg := msges.GetMessage("OPEN_REDIRECT_DETECTED")
+					findings = append(findings, report.Finding{
+						ID:       "OPEN_REDIRECT_DETECTED",
+						Category: string(checks.CategoryAppLogic),
+						Severity: report.SeverityMedium,
+						Title:    msg.Title,
+						Message:  fmt.Sprintf(msg.Message, param, targetDomain),
+						Fix:      msg.Fix,
+					})
+				}
+			}
+		}
+	}
+	return findings
 }
 func ExtractTextFromHTML(body []byte) string {
 	doc, err := html.Parse(strings.NewReader(string(body)))

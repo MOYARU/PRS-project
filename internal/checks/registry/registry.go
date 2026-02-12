@@ -154,7 +154,7 @@ func DefaultChecks() []checks.Check {
 			ID:          "SQL_INJECTION",
 			Category:    checks.CategoryInputHandling,
 			Title:       "SQL Injection 점검",
-			Description: "URL 파라미터에 SQL 구문을 주입하여 에러 발생 여부를 점검합니다.",
+			Description: "URL 파라미터(GET)에 SQL 구문을 주입하여 DB 에러 메시지 발생 여부를 점검합니다 (Error-based).",
 			Mode:        ctxpkg.Active,
 			Run:         injection.CheckSQLInjection,
 		},
@@ -166,6 +166,15 @@ func DefaultChecks() []checks.Check {
 			Mode:        ctxpkg.Active,
 			Run:         injection.CheckReflectedXSS,
 		},
+		// TODO: Boolean-based Blind SQL Injection 구현 필요 (Content-Length 또는 응답 본문 차이 분석)
+		// {
+		// 	ID:          "BOOLEAN_SQL_INJECTION",
+		// 	Category:    checks.CategoryInputHandling,
+		// 	Title:       "Boolean-based Blind SQL Injection",
+		// 	Description: "참/거짓 쿼리에 따른 응답 페이지의 차이를 분석하여 취약점을 탐지합니다.",
+		// 	Mode:        ctxpkg.Active,
+		// 	Run:         injection.CheckBooleanSQLInjection,
+		// },
 		{
 			ID:          "BLIND_SQL_INJECTION",
 			Category:    checks.CategoryInputHandling,
@@ -181,6 +190,22 @@ func DefaultChecks() []checks.Check {
 			Description: "URL 파라미터에 시간 지연 OS 명령어 페이로드를 주입하여 응답 시간 변화를 점검합니다.",
 			Mode:        ctxpkg.Active,
 			Run:         injection.CheckOSCommandInjection,
+		},
+		{
+			ID:          "SSTI_INJECTION",
+			Category:    checks.CategoryInputHandling,
+			Title:       "SSTI (Server-Side Template Injection) 점검",
+			Description: "템플릿 엔진 구문을 주입하여 서버 측 연산 여부를 점검합니다.",
+			Mode:        ctxpkg.Active,
+			Run:         injection.CheckSSTI,
+		},
+		{
+			ID:          "XXE_INJECTION",
+			Category:    checks.CategoryInputHandling,
+			Title:       "XXE (XML External Entity) 점검",
+			Description: "XML 파서가 외부 엔티티를 처리하는지 점검합니다.",
+			Mode:        ctxpkg.Active,
+			Run:         injection.CheckXXE,
 		},
 		// TODO: Stored XSS, DOM XSS, NoSQL, LDAP injection checks will be added here. 의 흔적 2
 		{

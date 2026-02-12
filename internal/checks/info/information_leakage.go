@@ -13,35 +13,35 @@ import (
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
+type leakagePattern struct {
+	MsgID string
+	Match func(body string) bool
+}
+
+var leakagePatterns = []leakagePattern{
+	{
+		MsgID: "INFORMATION_LEAKAGE_STACK_TRACE",
+		Match: func(b string) bool {
+			return strings.Contains(b, "stack trace") || strings.Contains(b, "Stack trace") ||
+				(strings.Contains(b, "at ") && strings.Contains(b, "line ") && (strings.Contains(b, ".java") || strings.Contains(b, ".go"))) ||
+				(strings.Contains(b, "at ") && strings.Contains(b, "in ") && strings.Contains(b, ".cs"))
+		},
+	},
+	{
+		MsgID: "INFORMATION_LEAKAGE_DB_ERROR",
+		Match: func(b string) bool {
+			return strings.Contains(b, "SQLSTATE") || strings.Contains(b, "ORA-") || strings.Contains(b, "SQL error") ||
+				strings.Contains(b, "JDBC error") || strings.Contains(b, "PostgreSQL error") || strings.Contains(b, "MySQL error") || strings.Contains(b, "db error")
+		},
+	},
+}
+
 func CheckInformationLeakage(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 
 	bodyString := string(ctx.BodyBytes)
 
-	type leakagePattern struct {
-		MsgID string // Changed to MsgID
-		Match func(body string) bool
-	}
-
-	patterns := []leakagePattern{
-		{
-			MsgID: "INFORMATION_LEAKAGE_STACK_TRACE",
-			Match: func(b string) bool {
-				return strings.Contains(b, "stack trace") || strings.Contains(b, "Stack trace") ||
-					(strings.Contains(b, "at ") && strings.Contains(b, "line ") && (strings.Contains(b, ".java") || strings.Contains(b, ".go"))) ||
-					(strings.Contains(b, "at ") && strings.Contains(b, "in ") && strings.Contains(b, ".cs"))
-			},
-		},
-		{
-			MsgID: "INFORMATION_LEAKAGE_DB_ERROR",
-			Match: func(b string) bool {
-				return strings.Contains(b, "SQLSTATE") || strings.Contains(b, "ORA-") || strings.Contains(b, "SQL error") ||
-					strings.Contains(b, "JDBC error") || strings.Contains(b, "PostgreSQL error") || strings.Contains(b, "MySQL error") || strings.Contains(b, "db error")
-			},
-		},
-	}
-
-	for _, p := range patterns {
+	for _, p := range leakagePatterns {
 		if p.Match(bodyString) {
 			msg := msges.GetMessage(p.MsgID) // Retrieve message
 			findings = append(findings, report.Finding{

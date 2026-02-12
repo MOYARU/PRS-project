@@ -13,6 +13,17 @@ import (
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
+var internalTargets = []struct {
+	Port      int
+	Signature string
+	Service   string
+}{
+	{22, "SSH-2.0", "SSH"},
+	{3306, "mysql", "MySQL"},
+	{6379, "redis", "Redis"},
+	{8080, "Apache Tomcat", "Tomcat"},
+}
+
 func CheckSSRF(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 	if ctx.Mode != ctxpkg.Active {
@@ -68,17 +79,6 @@ func CheckSSRF(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		resp.Body.Close()
 
 		// Check Internal Port Scan
-		internalTargets := []struct {
-			Port      int
-			Signature string
-			Service   string
-		}{
-			{22, "SSH-2.0", "SSH"},
-			{3306, "mysql", "MySQL"},
-			{6379, "redis", "Redis"},
-			{8080, "Apache Tomcat", "Tomcat"},
-		}
-
 		for _, target := range internalTargets {
 			localURL := fmt.Sprintf("http://127.0.0.1:%d", target.Port)
 			newParamsLocal := url.Values{}

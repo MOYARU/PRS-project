@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -14,6 +15,17 @@ import (
 	msges "github.com/MOYARU/PRS-project/internal/messages" // New import for messages
 	"github.com/MOYARU/PRS-project/internal/report"
 )
+
+var secretPatterns = []struct {
+	Name  string
+	Regex *regexp.Regexp
+}{
+	{"AWS Access Key", regexp.MustCompile(`AKIA[0-9A-Z]{16}`)},
+	{"Google/Firebase API Key", regexp.MustCompile(`AIza[0-9A-Za-z\\-_]{35}`)},
+	{"Generic API Key", regexp.MustCompile(`(?i)(api_key|apikey|secret|token)\s*[:=]\s*['"]([a-zA-Z0-9_\-]{20,})['"]`)},
+	{"Supabase/JWT", regexp.MustCompile(`eyJh[a-zA-Z0-9._-]{20,}`)},
+	{"Firebase Config", regexp.MustCompile(`apiKey\s*:\s*['"]([^'"]+)['"]`)},
+}
 
 func CheckWebContentExposure(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
@@ -46,23 +58,35 @@ func CheckWebContentExposure(ctx *ctxpkg.Context) ([]report.Finding, error) {
 
 		findings = append(findings, checkPathExposure(ctx, "/actuator", "ACTUATOR_ENDPOINT_EXPOSED", checks.CategoryInfrastructure)...)
 		findings = append(findings, checkPathExposure(ctx, "/debug", "DEBUG_ENDPOINT_EXPOSED", checks.CategoryInfrastructure)...)
+
+		// Backup files
+		backupExtensions := []string{".bak", ".old", ".swp", "~"}
+		path := ctx.FinalURL.Path
+		if path != "" && path != "/" {
+			for _, ext := range backupExtensions {
+				findings = append(findings, checkPathExposure(ctx, path+ext, "BACKUP_FILE_EXPOSED", checks.CategoryFileExposure)...)
+			}
+		}
 	}
 
 	// K. 클라이언트(브라우저) 보안
 	if ctx.Response != nil && ctx.Response.StatusCode == http.StatusOK {
 		contentType := ctx.Response.Header.Get("Content-Type")
+		bodyString := string(ctx.BodyBytes)
+
 		if strings.Contains(contentType, "text/html") {
-			bodyBytes, err := engine.DecodeResponseBody(ctx.Response)
+			// Parse HTML once and reuse the node tree
+			doc, err := html.Parse(strings.NewReader(bodyString))
 			if err == nil {
-				bodyString := string(bodyBytes)
-				// Parse HTML once and reuse the node tree
-				doc, err := html.Parse(strings.NewReader(bodyString))
-				if err == nil {
-					findings = append(findings, checkMixedContent(ctx, doc)...)
-					findings = append(findings, checkIframeSandbox(ctx, doc)...)
-					findings = append(findings, checkInlineScripts(ctx, doc)...)
-				}
+				findings = append(findings, checkMixedContent(ctx, doc)...)
+				findings = append(findings, checkIframeSandbox(ctx, doc)...)
+				findings = append(findings, checkInlineScripts(ctx, doc)...)
+				findings = append(findings, checkSecrets(bodyString)...)
+				findings = append(findings, checkConsoleUsage(bodyString)...)
 			}
+		} else if strings.Contains(contentType, "javascript") || strings.Contains(contentType, "application/x-javascript") {
+			findings = append(findings, checkSecrets(bodyString)...)
+			findings = append(findings, checkConsoleUsage(bodyString)...)
 		}
 	}
 
@@ -149,6 +173,46 @@ func checkMixedContent(ctx *ctxpkg.Context, doc *html.Node) []report.Finding {
 	}
 	f(doc)
 
+	return findings
+}
+
+func checkSecrets(content string) []report.Finding {
+	var findings []report.Finding
+	for _, pattern := range secretPatterns {
+		if match := pattern.Regex.FindStringSubmatch(content); len(match) > 0 {
+			foundValue := match[0]
+			if len(foundValue) > 50 { // Truncate for display
+				foundValue = foundValue[:47] + "..."
+			}
+			msg := msges.GetMessage("SENSITIVE_API_KEY_FOUND")
+			findings = append(findings, report.Finding{
+				ID:                         "SENSITIVE_API_KEY_FOUND",
+				Category:                   string(checks.CategoryInformationLeakage),
+				Severity:                   report.SeverityHigh,
+				Title:                      msg.Title,
+				Message:                    fmt.Sprintf(msg.Message, pattern.Name, foundValue),
+				Fix:                        msg.Fix,
+				IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
+			})
+		}
+	}
+	return findings
+}
+
+func checkConsoleUsage(content string) []report.Finding {
+	var findings []report.Finding
+	if strings.Contains(content, "console.log") || strings.Contains(content, "console.debug") || strings.Contains(content, "console.error") {
+		msg := msges.GetMessage("CONSOLE_LOG_EXPOSED")
+		findings = append(findings, report.Finding{
+			ID:                         "CONSOLE_LOG_EXPOSED",
+			Category:                   string(checks.CategoryInformationLeakage),
+			Severity:                   report.SeverityInfo,
+			Title:                      msg.Title,
+			Message:                    fmt.Sprintf(msg.Message, "console.* usage detected"),
+			Fix:                        msg.Fix,
+			IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
+		})
+	}
 	return findings
 }
 

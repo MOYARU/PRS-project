@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,6 +21,11 @@ func PrintFindings(findings []report.Finding) {
 		fmt.Printf("%s%s%s\n", ui.ColorGreen, msges.GetUIMessage("ConsoleNoIssues"), ui.ColorReset)
 		return
 	}
+
+	// Sort findings by severity (High -> Medium -> Low -> Info)
+	sort.Slice(findings, func(i, j int) bool {
+		return severityWeight(findings[i].Severity) > severityWeight(findings[j].Severity)
+	})
 
 	fmt.Printf("\n%s%s%s\n", ui.ColorWhite, msges.GetUIMessage("ConsoleFindingsTitle"), ui.ColorReset)
 	for _, f := range findings {
@@ -38,14 +44,13 @@ func PrintFindings(findings []report.Finding) {
 		}
 
 		// Localize finding details
-		msg := msges.GetMessage(f.ID)
-		title := f.Title
-		message := f.Message
-		fix := f.Fix
-		if msg.Title != "Message Not Found" {
-			title = msg.Title
-			message = msg.Message
-			fix = msg.Fix
+		var affectedURLs string
+		title, message, fix := f.Title, f.Message, f.Fix
+
+		if strings.Contains(message, "\n\nPRS_AFFECTED_URLS_SEPARATOR\n") {
+			parts := strings.SplitN(message, "\n\nPRS_AFFECTED_URLS_SEPARATOR\n", 2)
+			message = parts[0]
+			affectedURLs = parts[1]
 		}
 
 		fmt.Printf("\n%s[%s] (%s) %s%s\n", severityColor, f.Severity, f.Category, title, ui.ColorReset)
@@ -53,6 +58,12 @@ func PrintFindings(findings []report.Finding) {
 		fmt.Printf("%s → %s: %s%s\n", ui.ColorGray, msges.GetUIMessage("ConsoleFixLabel"), fix, ui.ColorReset)
 		if f.Confidence != "" { // Only print confidence if it's provided
 			fmt.Printf("%s → %s: %s%s\n", ui.ColorGray, msges.GetUIMessage("ConsoleConfidenceLabel"), f.Confidence, ui.ColorReset)
+		}
+		if affectedURLs != "" {
+			fmt.Printf("%s → Affected URLs:%s\n", ui.ColorGray, ui.ColorReset)
+			for _, u := range strings.Split(affectedURLs, "\n") {
+				fmt.Printf("%s   - %s%s\n", ui.ColorGray, u, ui.ColorReset)
+			}
 		}
 	}
 }
@@ -99,16 +110,13 @@ func SaveJSONReport(target string, scannedURLs []string, findings []report.Findi
 }
 
 // PrintScanSummary prints a summary of all performed checks
-func PrintScanSummary(performedChecks map[string]bool, allFindings []report.Finding) {
+func PrintScanSummary(checkCounts map[string]int, checksRan map[string]bool, findingsByCheck map[string][]report.Finding) {
 	fmt.Printf("\n%s%s%s\n", ui.ColorWhite, msges.GetUIMessage("ConsoleScanSummaryTitle"), ui.ColorReset)
 
-	findingsByCheckID := make(map[string]bool)
-	for _, f := range allFindings {
-		findingsByCheckID[f.ID] = true
-	}
-
 	for _, check := range registry.DefaultChecks() {
-		wasPerformed := performedChecks[check.ID]
+		ran := checksRan[check.ID]
+		count := checkCounts[check.ID]
+
 		checkTitle := check.Title
 		msg := msges.GetMessage(check.ID)
 		if msg.Title != "Message Not Found" {
@@ -116,9 +124,15 @@ func PrintScanSummary(performedChecks map[string]bool, allFindings []report.Find
 		}
 
 		var status, color string
-		found := findingsByCheckID[check.ID]
 
-		if found {
+		if !ran {
+			if check.Mode == ctxpkg.Active {
+				status = msges.GetUIMessage("ConsoleActiveModeRequired")
+			} else {
+				status = msges.GetUIMessage("ConsoleSkipped")
+			}
+			color = ui.ColorGray
+		} else if count > 0 {
 			status = msges.GetUIMessage("CheckStatusFound")
 			color = ui.ColorRed
 		} else {
@@ -126,15 +140,45 @@ func PrintScanSummary(performedChecks map[string]bool, allFindings []report.Find
 			color = ui.ColorGreen
 		}
 
-		if !wasPerformed {
-			if check.Mode == ctxpkg.Active {
-				status = msges.GetUIMessage("ConsoleActiveModeRequired")
-			} else {
-				status = msges.GetUIMessage("ConsoleSkipped")
-			}
-			color = ui.ColorGray
-		}
-
 		fmt.Printf(" [%s] %s%s%s\n", status, color, checkTitle, ui.ColorReset)
+
+		if count > 0 {
+			findings := findingsByCheck[check.ID]
+			for i, f := range findings {
+				connector := " 	├──"
+				if i == len(findings)-1 {
+					connector = " 	└──"
+				}
+
+				sevColor := ui.ColorWhite
+				switch f.Severity {
+				case report.SeverityHigh:
+					sevColor = ui.ColorHigh
+				case report.SeverityMedium:
+					sevColor = ui.ColorMedium
+				case report.SeverityLow:
+					sevColor = ui.ColorLow
+				case report.SeverityInfo:
+					sevColor = ui.ColorInfo
+				}
+
+				fmt.Printf("%s %s[%s] %s%s\n", connector, sevColor, f.Severity, f.Title, ui.ColorReset)
+			}
+		}
+	}
+}
+
+func severityWeight(s report.Severity) int {
+	switch s {
+	case report.SeverityHigh:
+		return 3
+	case report.SeverityMedium:
+		return 2
+	case report.SeverityLow:
+		return 1
+	case report.SeverityInfo:
+		return 0
+	default:
+		return -1
 	}
 }
