@@ -50,6 +50,7 @@ func CheckMethodOverride(ctx *ctxpkg.Context) ([]report.Finding, error) {
 			Confidence:                 report.ConfidenceMedium,
 			Title:                      msg.Title,
 			Message:                    fmt.Sprintf(msg.Message, overrideMethod),
+			Evidence:                   fmt.Sprintf("POST with X-HTTP-Method-Override: %s returned status %d, different from a normal POST (%d).", overrideMethod, overridePostResp.StatusCode, normalPostResp.StatusCode),
 			Fix:                        msg.Fix,
 			IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 		})

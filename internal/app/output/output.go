@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MOYARU/PRS-project/internal/app/ui"
@@ -14,6 +15,29 @@ import (
 	msges "github.com/MOYARU/PRS-project/internal/messages"
 	"github.com/MOYARU/PRS-project/internal/report"
 )
+
+var progressMu sync.Mutex
+
+// PrintScanProgress updates the current scan progress on the same line.
+func PrintScanProgress(current, total int, checkName, target string) {
+	progressMu.Lock()
+	defer progressMu.Unlock()
+
+	percentage := float64(current) / float64(total) * 100
+	// Truncate target URL to prevent line wrapping
+	if len(target) > 50 {
+		target = target[:47] + "..."
+	}
+	width := 30
+	filled := int(float64(width) * (float64(current) / float64(total)))
+	if filled > width {
+		filled = width
+	}
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
+
+	// \r로 커서를 앞으로 이동, \033[K로 줄의 나머지 내용 삭제
+	fmt.Printf("\r [%s] %.0f%% | %s [%d/%d]: %s\033[K", bar, percentage, checkName, current, total, target)
+}
 
 // printFindings prints the scan findings to the console with appropriate formatting and colors.
 func PrintFindings(findings []report.Finding) {
@@ -44,45 +68,65 @@ func PrintFindings(findings []report.Finding) {
 		}
 
 		// Localize finding details
-		var affectedURLs string
 		title, message, fix := f.Title, f.Message, f.Fix
-
-		if strings.Contains(message, "\n\nPRS_AFFECTED_URLS_SEPARATOR\n") {
-			parts := strings.SplitN(message, "\n\nPRS_AFFECTED_URLS_SEPARATOR\n", 2)
-			message = parts[0]
-			affectedURLs = parts[1]
-		}
 
 		fmt.Printf("\n%s[%s] (%s) %s%s\n", severityColor, f.Severity, f.Category, title, ui.ColorReset)
 		fmt.Printf("%s → %s%s\n", ui.ColorGray, message, ui.ColorReset)
+		if f.Evidence != "" {
+			fmt.Printf("%s → %s: %s%s\n", ui.ColorGray, msges.GetUIMessage("ConsoleEvidenceLabel"), f.Evidence, ui.ColorReset)
+		}
 		fmt.Printf("%s → %s: %s%s\n", ui.ColorGray, msges.GetUIMessage("ConsoleFixLabel"), fix, ui.ColorReset)
 		if f.Confidence != "" { // Only print confidence if it's provided
 			fmt.Printf("%s → %s: %s%s\n", ui.ColorGray, msges.GetUIMessage("ConsoleConfidenceLabel"), f.Confidence, ui.ColorReset)
 		}
-		if affectedURLs != "" {
+		if len(f.AffectedURLs) > 0 {
 			fmt.Printf("%s → Affected URLs:%s\n", ui.ColorGray, ui.ColorReset)
-			for _, u := range strings.Split(affectedURLs, "\n") {
+			for _, u := range f.AffectedURLs {
 				fmt.Printf("%s   - %s%s\n", ui.ColorGray, u, ui.ColorReset)
 			}
 		}
 	}
 }
 
-// 이거 없애야 하나
 func SaveJSONReport(target string, scannedURLs []string, findings []report.Finding, startTime, endTime time.Time) error {
+	type Summary struct {
+		High   int `json:"high"`
+		Medium int `json:"medium"`
+		Low    int `json:"low"`
+		Info   int `json:"info"`
+		Total  int `json:"total"`
+	}
+
 	type JSONReport struct {
 		Target      string           `json:"target"`
 		ScannedURLs []string         `json:"scanned_urls"`
 		StartTime   time.Time        `json:"start_time"`
 		EndTime     time.Time        `json:"end_time"`
+		Summary     Summary          `json:"summary"`
 		Findings    []report.Finding `json:"findings"`
 	}
+
+	summary := Summary{}
+	for _, f := range findings {
+		switch f.Severity {
+		case report.SeverityHigh:
+			summary.High++
+		case report.SeverityMedium:
+			summary.Medium++
+		case report.SeverityLow:
+			summary.Low++
+		case report.SeverityInfo:
+			summary.Info++
+		}
+	}
+	summary.Total = len(findings)
 
 	reportData := JSONReport{
 		Target:      target,
 		ScannedURLs: scannedURLs,
 		StartTime:   startTime,
 		EndTime:     endTime,
+		Summary:     summary,
 		Findings:    findings,
 	}
 
@@ -111,6 +155,7 @@ func SaveJSONReport(target string, scannedURLs []string, findings []report.Findi
 
 // PrintScanSummary prints a summary of all performed checks
 func PrintScanSummary(checkCounts map[string]int, checksRan map[string]bool, findingsByCheck map[string][]report.Finding) {
+	fmt.Println() // 진행률 표시줄 다음으로 넘기기 위해 줄바꿈 추가
 	fmt.Printf("\n%s%s%s\n", ui.ColorWhite, msges.GetUIMessage("ConsoleScanSummaryTitle"), ui.ColorReset)
 
 	for _, check := range registry.DefaultChecks() {

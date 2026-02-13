@@ -3,12 +3,19 @@ package packet
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/MOYARU/PRS-project/internal/checks"
 	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context"
 	msges "github.com/MOYARU/PRS-project/internal/messages"
 	"github.com/MOYARU/PRS-project/internal/report"
+)
+
+var (
+	emailRegex = regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
+	ssnRegex   = regexp.MustCompile(`\d{3}-\d{2}-\d{4}`)
+	// creditCardRegex = ... (omitted for brevity/safety, can be added)
 )
 
 type CanonicalPacket struct {
@@ -35,6 +42,7 @@ func CheckPacketAnomalies(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		simpleHeader := strings.Split(packet.RespContentType, ";")[0]
 
 		if simpleHeader == "application/json" && strings.Contains(simpleDetected, "html") {
+			evidence := fmt.Sprintf("Header: %s, Detected: %s", simpleHeader, simpleDetected)
 			msg := msges.GetMessage("PACKET_CONTENT_TYPE_MISMATCH")
 			findings = append(findings, report.Finding{
 				ID:         "PACKET_CONTENT_TYPE_MISMATCH",
@@ -43,6 +51,7 @@ func CheckPacketAnomalies(ctx *ctxpkg.Context) ([]report.Finding, error) {
 				Confidence: report.ConfidenceHigh,
 				Title:      msg.Title,
 				Message:    fmt.Sprintf(msg.Message, simpleHeader, simpleDetected),
+				Evidence:   evidence,
 				Fix:        msg.Fix,
 			})
 		}
@@ -87,6 +96,46 @@ func CheckPacketAnomalies(ctx *ctxpkg.Context) ([]report.Finding, error) {
 			Title:      msg.Title,
 			Message:    fmt.Sprintf(msg.Message, packet.ReqAccept, packet.RespContentType),
 			Fix:        msg.Fix,
+		})
+	}
+
+	// Cache-Control Check
+	cc := ctx.Response.Header.Get("Cache-Control")
+	if cc == "" || (!strings.Contains(cc, "no-store") && !strings.Contains(cc, "private")) {
+		// Only for sensitive content types
+		if strings.Contains(packet.RespContentType, "application/json") {
+			// findings = append(...) // Add finding if needed
+		}
+	}
+
+	// PII Leakage Check (Regex on Body)
+	bodyString := string(ctx.BodyBytes)
+	if emailRegex.MatchString(bodyString) {
+		match := emailRegex.FindString(bodyString)
+		// Simple filter to avoid FP on example emails
+		if !strings.Contains(match, "example.com") {
+			findings = append(findings, report.Finding{
+				ID:         "PII_LEAKAGE_EMAIL",
+				Category:   string(checks.CategoryInformationLeakage),
+				Severity:   report.SeverityMedium,
+				Confidence: report.ConfidenceMedium,
+				Title:      "Email Address Leaked",
+				Message:    "Potential email address found in response body.",
+				Evidence:   match,
+				Fix:        "Ensure PII is not leaked in responses.",
+			})
+		}
+	}
+	if ssnRegex.MatchString(bodyString) {
+		findings = append(findings, report.Finding{
+			ID:         "PII_LEAKAGE_SSN",
+			Category:   string(checks.CategoryInformationLeakage),
+			Severity:   report.SeverityHigh,
+			Confidence: report.ConfidenceMedium,
+			Title:      "SSN Leaked",
+			Message:    "Potential Social Security Number found in response body.",
+			Evidence:   ssnRegex.FindString(bodyString),
+			Fix:        "Ensure PII is not leaked in responses.",
 		})
 	}
 

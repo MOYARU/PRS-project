@@ -21,6 +21,7 @@ func CheckRateLimitAbsence(ctx *ctxpkg.Context) ([]report.Finding, error) {
 			Confidence:                 report.ConfidenceMedium,
 			Title:                      msg.Title,
 			Message:                    msg.Message,
+			Evidence:                   "The 'Retry-After' header was not found in the response.",
 			Fix:                        msg.Fix,
 			IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 		})
@@ -44,6 +45,7 @@ func CheckRateLimitAbsence(ctx *ctxpkg.Context) ([]report.Finding, error) {
 			Confidence:                 report.ConfidenceMedium,
 			Title:                      msg.Title,
 			Message:                    msg.Message,
+			Evidence:                   "No 'X-RateLimit-*' headers were found in the response.",
 			Fix:                        msg.Fix,
 			IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 		})

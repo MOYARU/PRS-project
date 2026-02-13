@@ -1,6 +1,7 @@
 package application
 
 import (
+	"crypto/rand"
 	"fmt"
 	"math"
 	"net/http"
@@ -40,7 +41,7 @@ func CheckApplicationSecurity(ctx *ctxpkg.Context) ([]report.Finding, error) {
 func checkInputReflection(ctx *ctxpkg.Context) []report.Finding {
 	var findings []report.Finding
 
-	testString := "PRS_TEST_REFLECTION_STRING_12345"
+	testString := "PRS_" + generateRandomString(12)
 	originalURL := ctx.FinalURL.String()
 
 	parsedURL, err := url.Parse(originalURL)
@@ -106,6 +107,13 @@ func checkIDOR(ctx *ctxpkg.Context) []report.Finding {
 			testURL = ctx.FinalURL.Scheme + "://" + ctx.FinalURL.Host + testPath // Re-assign
 			msg = msges.GetMessage("IDOR_POSSIBLE")
 			findings = append(findings, probeIDOR(ctx, originalURL, testURL, fmt.Sprintf(msg.Message, id, id+1), msg.IsPotentiallyFalsePositive)...)
+
+			// Try random ID
+			randID := 1000 + int(id)%500
+			testPath = strings.Join(pathSegments[:i], "/") + "/" + strconv.Itoa(randID) + strings.Join(pathSegments[i+1:], "/")
+			testURL = ctx.FinalURL.Scheme + "://" + ctx.FinalURL.Host + testPath
+			msg = msges.GetMessage("IDOR_POSSIBLE")
+			findings = append(findings, probeIDOR(ctx, originalURL, testURL, fmt.Sprintf(msg.Message, id, randID), msg.IsPotentiallyFalsePositive)...)
 		}
 	}
 
@@ -128,6 +136,12 @@ func checkIDOR(ctx *ctxpkg.Context) []report.Finding {
 				testURL = ctx.FinalURL.Scheme + "://" + ctx.FinalURL.Host + ctx.FinalURL.Path + "?" + newQuery.Encode()
 				msg = msges.GetMessage("IDOR_POSSIBLE") // Assuming IDOR_POSSIBLE has format string
 				findings = append(findings, probeIDOR(ctx, originalURL, testURL, fmt.Sprintf(msg.Message, id, id+1), msg.IsPotentiallyFalsePositive)...)
+
+				// Try random ID
+				newQuery.Set(param, strconv.Itoa(id+100))
+				testURL = ctx.FinalURL.Scheme + "://" + ctx.FinalURL.Host + ctx.FinalURL.Path + "?" + newQuery.Encode()
+				msg = msges.GetMessage("IDOR_POSSIBLE")
+				findings = append(findings, probeIDOR(ctx, originalURL, testURL, fmt.Sprintf(msg.Message, id, id+100), msg.IsPotentiallyFalsePositive)...)
 			}
 		}
 	}
@@ -207,7 +221,8 @@ func checkCSRFTokenPresence(ctx *ctxpkg.Context) []report.Finding {
 	if strings.Contains(strings.ToLower(bodyString), "<form") {
 		hasCSRFToken := strings.Contains(strings.ToLower(bodyString), "csrf_token") ||
 			strings.Contains(strings.ToLower(bodyString), "authenticity_token") ||
-			strings.Contains(strings.ToLower(bodyString), "_token")
+			strings.Contains(strings.ToLower(bodyString), "_token") ||
+			strings.Contains(strings.ToLower(bodyString), "csrf-token") // Meta tag check
 
 		if !hasCSRFToken {
 			msg := msges.GetMessage("CSRF_TOKEN_POSSIBLY_MISSING")
@@ -285,6 +300,8 @@ func checkOpenRedirect(ctx *ctxpkg.Context) []report.Finding {
 		"http://" + targetDomain,
 		"//" + targetDomain,
 		"/\\" + targetDomain,
+		"javascript:alert(1)",
+		"data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
 	}
 
 	u, _ := url.Parse(ctx.FinalURL.String())
@@ -305,8 +322,7 @@ func checkOpenRedirect(ctx *ctxpkg.Context) []report.Finding {
 			}
 
 			// Don't follow redirects automatically to check the Location header
-			client := engine.NewHTTPClient(false, nil)
-			resp, err := client.Do(req)
+			resp, err := ctx.HTTPClient.Do(req)
 			if err != nil {
 				continue
 			}
@@ -401,5 +417,25 @@ func IsErrorPage(body string, status int) bool {
 	if status >= 400 && status < 500 && status != http.StatusOK && status != http.StatusFound && status != http.StatusForbidden {
 		return true
 	}
+
+	lowerBody := strings.ToLower(body)
+	errorKeywords := []string{"not found", "404", "error", "exception", "failed", "unauthorized", "forbidden"}
+	for _, keyword := range errorKeywords {
+		if strings.Contains(lowerBody, keyword) {
+			return true
+		}
+	}
 	return false
+}
+
+func generateRandomString(n int) string {
+	const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	bytes := make([]byte, n)
+	if _, err := rand.Read(bytes); err != nil {
+		return "fallback"
+	}
+	for i, b := range bytes {
+		bytes[i] = letters[b%byte(len(letters))]
+	}
+	return string(bytes)
 }

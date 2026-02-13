@@ -3,7 +3,9 @@ package info
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/MOYARU/PRS-project/internal/checks"
 	"github.com/MOYARU/PRS-project/internal/checks/application"
@@ -18,6 +20,8 @@ type leakagePattern struct {
 	Match func(body string) bool
 }
 
+var oraErrorRegex = regexp.MustCompile(`ORA-\d{5}`)
+
 var leakagePatterns = []leakagePattern{
 	{
 		MsgID: "INFORMATION_LEAKAGE_STACK_TRACE",
@@ -30,7 +34,7 @@ var leakagePatterns = []leakagePattern{
 	{
 		MsgID: "INFORMATION_LEAKAGE_DB_ERROR",
 		Match: func(b string) bool {
-			return strings.Contains(b, "SQLSTATE") || strings.Contains(b, "ORA-") || strings.Contains(b, "SQL error") ||
+			return strings.Contains(b, "SQLSTATE") || oraErrorRegex.MatchString(b) || strings.Contains(b, "SQL error") ||
 				strings.Contains(b, "JDBC error") || strings.Contains(b, "PostgreSQL error") || strings.Contains(b, "MySQL error") || strings.Contains(b, "db error")
 		},
 	},
@@ -113,38 +117,55 @@ func CheckInformationLeakage(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		debugEndpoints := []string{
 			"/.env", "/.git/config", "/.git/HEAD", "/debug", "/admin", "/phpinfo.php",
 			"/server-status", "/~root", "/~admin", "/manager/html", "/jmx-console",
+			"/config.json", "/api-docs", "/v2/api-docs", "/swagger.json", "/actuator/env",
 		}
 
-		client := engine.NewHTTPClient(false, nil) // Reuse default client
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		sem := make(chan struct{}, 10)
+
 		for _, endpoint := range debugEndpoints {
-			endpointURL := ctx.FinalURL.Scheme + "://" + ctx.FinalURL.Host + endpoint
-			req, err := http.NewRequest("GET", endpointURL, nil)
-			if err != nil {
-				continue
-			}
+			wg.Add(1)
+			go func(endpoint string) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
 
-			resp, err := client.Do(req)
-			if err != nil {
-				continue
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode == http.StatusOK {
-				bodyBytes, _ := engine.DecodeResponseBody(resp)
-				if !application.IsErrorPage(string(bodyBytes), resp.StatusCode) {
-					msg := msges.GetMessage("INFORMATION_LEAKAGE_DEBUG_META_ENDPOINT")
-					findings = append(findings, report.Finding{
-						ID:         "INFORMATION_LEAKAGE_DEBUG_META_ENDPOINT",
-						Category:   string(checks.CategoryInformationLeakage),
-						Severity:   report.SeverityMedium,
-						Confidence: report.ConfidenceMedium,
-						Title:      msg.Title,
-						Message:    fmt.Sprintf(msg.Message, endpoint),
-						Fix:        msg.Fix,
-					})
+				endpointURL := ctx.FinalURL.Scheme + "://" + ctx.FinalURL.Host + endpoint
+				req, err := http.NewRequest("GET", endpointURL, nil)
+				if err != nil {
+					return
 				}
-			}
+
+				resp, err := ctx.HTTPClient.Do(req)
+				if err != nil {
+					return
+				}
+				defer resp.Body.Close()
+
+				if resp.StatusCode == http.StatusOK {
+					bodyBytes, _ := engine.DecodeResponseBody(resp)
+					bodyString := string(bodyBytes)
+
+					// FP Reduction: Check if it's a generic error page or too short
+					if len(bodyString) > 50 && !application.IsErrorPage(bodyString, resp.StatusCode) {
+						msg := msges.GetMessage("INFORMATION_LEAKAGE_DEBUG_META_ENDPOINT")
+						mu.Lock()
+						findings = append(findings, report.Finding{
+							ID:         "INFORMATION_LEAKAGE_DEBUG_META_ENDPOINT",
+							Category:   string(checks.CategoryInformationLeakage),
+							Severity:   report.SeverityMedium,
+							Confidence: report.ConfidenceMedium,
+							Title:      msg.Title,
+							Message:    fmt.Sprintf(msg.Message, endpoint),
+							Fix:        msg.Fix,
+						})
+						mu.Unlock()
+					}
+				}
+			}(endpoint)
 		}
+		wg.Wait()
 	}
 
 	return findings, nil

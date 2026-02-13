@@ -2,10 +2,14 @@ package scan
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/MOYARU/PRS-project/internal/app/output"
@@ -13,6 +17,7 @@ import (
 	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context"
 	"github.com/MOYARU/PRS-project/internal/checks/scanner"
 	"github.com/MOYARU/PRS-project/internal/crawler"
+	"github.com/MOYARU/PRS-project/internal/engine"
 	msges "github.com/MOYARU/PRS-project/internal/messages"
 	"github.com/MOYARU/PRS-project/internal/report"
 )
@@ -20,7 +25,11 @@ import (
 func RunScan(target string, activeScan bool, crawl bool, depth int, jsonOutput bool, htmlOutput bool, delay int) error {
 	// Normalize target URL: Add http:// scheme if missing (supports IP addresses and domains)
 	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
-		target = "http://" + target
+		if isHTTPSReachable(target) {
+			target = "https://" + target
+		} else {
+			target = "http://" + target
+		}
 	}
 
 	// Setup context with cancellation
@@ -109,67 +118,101 @@ func RunScan(target string, activeScan bool, crawl bool, depth int, jsonOutput b
 	}
 	type findingInfo struct {
 		Finding report.Finding
-		URLs    []string
+		URLs    map[string]bool
 		CheckID string
 	}
 	aggregatedFindings := make(map[findingKey]*findingInfo)
-	var findingKeys []findingKey
+	var mu sync.Mutex
+	var wg sync.WaitGroup
 
-	for i, t := range targets {
-		if ctx.Err() != nil {
-			break
-		}
-		fmt.Printf("\n%s%s%s\n", ui.ColorWhite, msges.GetUIMessage("ScanningProgress", i+1, len(targets), t), ui.ColorReset)
-		scn, err := scanner.New(t, mode, delayDuration)
-		if err != nil {
-			fmt.Printf("%s%s%s\n", ui.ColorRed, msges.GetUIMessage("ScannerInitFailed", t, err), ui.ColorReset)
-			continue
-		}
-		resultsByCheck, err := scn.Run(ctx) // Pass context
-		if err != nil {
-			fmt.Printf("%s%s%s\n", ui.ColorRed, msges.GetUIMessage("ScanFailed", t, err), ui.ColorReset)
-			continue
-		}
+	// Concurrency limit (e.g., 5 workers)
+	sem := make(chan struct{}, 5)
 
-		for checkID, findings := range resultsByCheck {
-			checksRan[checkID] = true
-			if checkUniqueFindings[checkID] == nil {
-				checkUniqueFindings[checkID] = make(map[string]bool)
-			}
+	var scanErrors []string
+	var completedCount int32
+	output.PrintScanProgress(0, len(targets), "Ready", "")
 
-			for _, f := range findings {
-				// Global aggregation
-				k := findingKey{ID: f.ID, Message: f.Message}
-				if _, exists := aggregatedFindings[k]; !exists {
-					aggregatedFindings[k] = &findingInfo{Finding: f, URLs: []string{}, CheckID: checkID}
-					findingKeys = append(findingKeys, k)
-				}
-				aggregatedFindings[k].URLs = append(aggregatedFindings[k].URLs, t)
-
-				// Per-check unique counting
-				uniqueKey := f.ID + "|" + f.Message
-				checkUniqueFindings[checkID][uniqueKey] = true
-			}
+	// Create a shared client for connection pooling
+	sharedClient := engine.NewHTTPClient(false, nil)
+	if delay > 0 {
+		sharedClient.Transport = &engine.DelayedTransport{
+			Transport: sharedClient.Transport,
+			Delay:     delayDuration,
 		}
 	}
 
+	for i, t := range targets {
+		wg.Add(1)
+		go func(idx int, urlStr string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			// Update progress bar on completion (defer to ensure it runs even on error)
+			defer func() {
+				newCount := atomic.AddInt32(&completedCount, 1)
+				output.PrintScanProgress(int(newCount), len(targets), "Scanning", urlStr)
+			}()
+
+			if ctx.Err() != nil {
+				return
+			}
+
+			scn, err := scanner.New(urlStr, mode, delayDuration, sharedClient)
+			if err != nil {
+				mu.Lock()
+				scanErrors = append(scanErrors, msges.GetUIMessage("ScannerInitFailed", urlStr, err))
+				mu.Unlock()
+				return
+			}
+			resultsByCheck, err := scn.Run(ctx)
+			if err != nil {
+				mu.Lock()
+				scanErrors = append(scanErrors, msges.GetUIMessage("ScanFailed", urlStr, err))
+				mu.Unlock()
+				return
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			for checkID, findings := range resultsByCheck {
+				checksRan[checkID] = true
+				if checkUniqueFindings[checkID] == nil {
+					checkUniqueFindings[checkID] = make(map[string]bool)
+				}
+
+				for _, f := range findings {
+					// Global aggregation
+					k := findingKey{ID: f.ID, Message: f.Message}
+					if _, exists := aggregatedFindings[k]; !exists {
+						aggregatedFindings[k] = &findingInfo{
+							Finding: f,
+							URLs:    make(map[string]bool),
+							CheckID: checkID,
+						}
+					}
+					aggregatedFindings[k].URLs[urlStr] = true
+
+					// Per-check unique counting
+					uniqueKey := f.ID + "|" + f.Message
+					checkUniqueFindings[checkID][uniqueKey] = true
+				}
+			}
+		}(i, t)
+	}
+	wg.Wait()
+
 	findingsByCheck := make(map[string][]report.Finding)
-	for _, k := range findingKeys {
-		info := aggregatedFindings[k]
+
+	// Convert aggregated map to slice
+	for _, info := range aggregatedFindings {
 		f := info.Finding
 
-		uniqueURLs := make([]string, 0, len(info.URLs))
-		seenURLs := make(map[string]bool)
-		for _, u := range info.URLs {
-			if !seenURLs[u] {
-				seenURLs[u] = true
-				uniqueURLs = append(uniqueURLs, u)
-			}
+		for u := range info.URLs {
+			f.AffectedURLs = append(f.AffectedURLs, u)
 		}
 
-		if len(uniqueURLs) > 0 {
-			f.Message += "\n\nPRS_AFFECTED_URLS_SEPARATOR\n" + strings.Join(uniqueURLs, "\n")
-		}
 		allFindings = append(allFindings, f)
 		if info.CheckID != "" {
 			findingsByCheck[info.CheckID] = append(findingsByCheck[info.CheckID], f)
@@ -178,6 +221,14 @@ func RunScan(target string, activeScan bool, crawl bool, depth int, jsonOutput b
 
 	endTime := time.Now()
 	fmt.Printf("\n%s%s%s\n", ui.ColorGreen, msges.GetUIMessage("AllScansCompleted"), ui.ColorReset)
+
+	// Print any scan errors that occurred
+	if len(scanErrors) > 0 {
+		fmt.Printf("\n%sErrors encountered during scan:%s\n", ui.ColorRed, ui.ColorReset)
+		for _, errMsg := range scanErrors {
+			fmt.Printf(" - %s\n", errMsg)
+		}
+	}
 
 	// Calculate final counts per check
 	checkCounts := make(map[string]int)
@@ -200,4 +251,22 @@ func RunScan(target string, activeScan bool, crawl bool, depth int, jsonOutput b
 		}
 	}
 	return nil
+}
+
+func isHTTPSReachable(target string) bool {
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+	resp, err := client.Head("https://" + target)
+	if err != nil {
+		resp, err = client.Get("https://" + target)
+	}
+	if err == nil {
+		resp.Body.Close()
+		return true
+	}
+	return false
 }

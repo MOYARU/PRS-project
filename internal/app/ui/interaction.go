@@ -12,17 +12,16 @@ import (
 	"golang.org/x/term"
 )
 
-// 언어 선택 <-- 걍 영어로 할걸 그랬다 삽질만 겁나함
 func SelectLanguage() {
 	// Check if terminal
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		fmt.Println("Not a terminal, defaulting to Korean.")
+		fmt.Println("Not a terminal, defaulting to English.")
 		return
 	}
 
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
-		fmt.Println("Failed to enter raw mode, defaulting to Korean.")
+		fmt.Println("Failed to enter raw mode, defaulting to English.")
 		return
 	}
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
@@ -31,8 +30,8 @@ func SelectLanguage() {
 		Label string
 		Lang  msges.Language
 	}{
-		{"한국어 (Korean)", msges.LangKO},
 		{"English", msges.LangEN},
+		{"한국어 (Korean)", msges.LangKO},
 	}
 	selected := 0
 

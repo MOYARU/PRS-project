@@ -22,38 +22,50 @@ func CheckSecurityHeaders(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	headers := ctx.Response.Header
 	var findings []report.Finding
 
-	findings = append(findings, missingHeader(headers, "Content-Security-Policy", "CONTENT_SECURITY_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityMedium)...)
-	findings = append(findings, missingHeader(headers, "X-Frame-Options", "X_FRAME_OPTIONS_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
-	findings = append(findings, missingHeader(headers, "X-Content-Type-Options", "X_CONTENT_TYPE_OPTIONS_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
-	findings = append(findings, missingHeader(headers, "Referrer-Policy", "REFERRER_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
-	findings = append(findings, missingHeader(headers, "Permissions-Policy", "PERMISSIONS_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
-	findings = append(findings, missingHeader(headers, "Cross-Origin-Opener-Policy", "CROSS_ORIGIN_OPENER_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
-	findings = append(findings, missingHeader(headers, "Cross-Origin-Embedder-Policy", "CROSS_ORIGIN_EMBEDDER_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
-	findings = append(findings, missingHeader(headers, "Cross-Origin-Resource-Policy", "CROSS_ORIGIN_RESOURCE_POLICY_MISSING", checks.CategorySecurityHeaders, report.SeverityLow)...)
+	// Check for missing headers and aggregate them
+	headersToCheck := []struct {
+		Name     string
+		Severity report.Severity
+	}{
+		{"Content-Security-Policy", report.SeverityMedium},
+		{"X-Frame-Options", report.SeverityLow},
+		{"X-Content-Type-Options", report.SeverityLow},
+		{"Referrer-Policy", report.SeverityLow},
+		{"Permissions-Policy", report.SeverityLow},
+		{"Cross-Origin-Opener-Policy", report.SeverityLow},
+		{"Cross-Origin-Embedder-Policy", report.SeverityLow},
+		{"Cross-Origin-Resource-Policy", report.SeverityLow},
+	}
+
+	var missing []string
+	maxSeverity := report.SeverityLow
+
+	for _, h := range headersToCheck {
+		if headers.Get(h.Name) == "" {
+			missing = append(missing, h.Name)
+			if h.Severity == report.SeverityMedium {
+				maxSeverity = report.SeverityMedium
+			}
+		}
+	}
+
+	if len(missing) > 0 {
+		msg := msges.GetMessage("MISSING_SECURITY_HEADERS")
+		findings = append(findings, report.Finding{
+			ID:       "MISSING_SECURITY_HEADERS",
+			Category: string(checks.CategorySecurityHeaders),
+			Severity: maxSeverity,
+			Title:    msg.Title,
+			Message:  fmt.Sprintf(msg.Message, strings.Join(missing, ", ")),
+			Fix:      msg.Fix,
+		})
+	}
 
 	findings = append(findings, checkHSTS(ctx, headers)...)
 	findings = append(findings, checkCookieFlags(ctx.Response)...)
 	findings = append(findings, checkInfoHeaders(headers)...)
 
 	return findings, nil
-}
-
-func missingHeader(headers http.Header, headerName, msgID string, category checks.Category, severity report.Severity) []report.Finding {
-
-	if headers.Get(headerName) != "" {
-		return nil
-	}
-	msg := msges.GetMessage(msgID)
-	return []report.Finding{
-		{
-			ID:       msgID,
-			Category: string(category),
-			Severity: severity,
-			Title:    msg.Title,
-			Message:  msg.Message,
-			Fix:      msg.Fix,
-		},
-	}
 }
 
 func checkHSTS(ctx *ctxpkg.Context, headers http.Header) []report.Finding {

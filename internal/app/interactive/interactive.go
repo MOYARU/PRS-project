@@ -8,8 +8,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/MOYARU/PRS-project/internal/app/scan"
 	"github.com/MOYARU/PRS-project/internal/app/ui"
@@ -20,7 +20,16 @@ import (
 
 // RunInteractiveMode starts the interactive mode of PRS.
 func RunInteractiveMode(cmdObj *cobra.Command) {
-	fmt.Println(cmdObj.Long)
+	ui.PrintGradientAsciiArt()
+
+	// Print help text (flag descriptions, examples) but remove duplicate ASCII art
+	helpText := cmdObj.Long
+	if strings.Contains(helpText, ui.AsciiArt) {
+		helpText = strings.Replace(helpText, ui.AsciiArt, "", 1)
+	}
+	fmt.Println(helpText)
+
+	fmt.Println()
 	fmt.Printf("%s%s%s\n", ui.ColorGray, msges.GetUIMessage("InteractiveWelcome"), ui.ColorReset)
 
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
@@ -30,7 +39,8 @@ func RunInteractiveMode(cmdObj *cobra.Command) {
 	}
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
-	var cmdBuffer []byte
+	var cmdBuffer []rune
+	var cursorPos int
 	history := []string{}
 	historyIndex := 0
 
@@ -38,7 +48,30 @@ Loop:
 	for {
 		// Print prompt
 		prompt := getPrompt()
+
+		// Calculate visual offset for cursor
+		suffix := cmdBuffer[cursorPos:]
+		moveBack := 0
+		for _, r := range suffix {
+			// Simple heuristic for wide characters (CJK, Hangul, etc.)
+			if r >= 0x1100 && (r <= 0x115f || r == 0x2329 || r == 0x232a ||
+				(r >= 0x2e80 && r <= 0xa4cf && r != 0x303f) ||
+				(r >= 0xac00 && r <= 0xd7a3) ||
+				(r >= 0xf900 && r <= 0xfaff) ||
+				(r >= 0xfe10 && r <= 0xfe19) ||
+				(r >= 0xfe30 && r <= 0xfe6f) ||
+				(r >= 0xff00 && r <= 0xff60) ||
+				(r >= 0xffe0 && r <= 0xffe6)) {
+				moveBack += 2
+			} else {
+				moveBack += 1
+			}
+		}
+
 		fmt.Print("\r\033[K" + prompt + string(cmdBuffer))
+		if moveBack > 0 {
+			fmt.Printf("\033[%dD", moveBack)
+		}
 
 		// Read byte
 		b := make([]byte, 1024)
@@ -53,33 +86,40 @@ Loop:
 			case 65: // Up Arrow
 				if historyIndex > 0 {
 					historyIndex--
-					cmdBuffer = []byte(history[historyIndex])
+					cmdBuffer = []rune(history[historyIndex])
+					cursorPos = len(cmdBuffer)
 				}
 			case 66: // Down Arrow
 				if historyIndex < len(history)-1 {
 					historyIndex++
-					cmdBuffer = []byte(history[historyIndex])
+					cmdBuffer = []rune(history[historyIndex])
+					cursorPos = len(cmdBuffer)
 				} else {
 					historyIndex = len(history)
-					cmdBuffer = []byte{}
+					cmdBuffer = []rune{}
+					cursorPos = 0
 				}
 			case 68: // Left Arrow
-				msges.SetLanguage(msges.LangKO)
+				if cursorPos > 0 {
+					cursorPos--
+				}
 			case 67: // Right Arrow
-				msges.SetLanguage(msges.LangEN)
+				if cursorPos < len(cmdBuffer) {
+					cursorPos++
+				}
 			}
 			continue
 		}
 
 		// Handle other keys
-		for i := 0; i < n; i++ {
-			char := b[i]
+		inputRunes := []rune(string(b[:n]))
+		for _, char := range inputRunes {
 			switch char {
 			case 3: // Ctrl+C
 				term.Restore(int(os.Stdin.Fd()), oldState)
 				fmt.Println()
 				return
-			case 13: // Enter
+			case 13, 10: // Enter
 				term.Restore(int(os.Stdin.Fd()), oldState)
 				fmt.Println()
 				input := strings.TrimSpace(string(cmdBuffer))
@@ -87,7 +127,8 @@ Loop:
 					history = append(history, input)
 					historyIndex = len(history)
 				}
-				cmdBuffer = []byte{}
+				cmdBuffer = []rune{}
+				cursorPos = 0
 
 				// Process command
 				if processCommand(input) {
@@ -96,13 +137,17 @@ Loop:
 				oldState, _ = term.MakeRaw(int(os.Stdin.Fd()))
 				continue Loop
 			case 127, 8: // Backspace
-				if len(cmdBuffer) > 0 {
-					_, size := utf8.DecodeLastRune(cmdBuffer)
-					cmdBuffer = cmdBuffer[:len(cmdBuffer)-size]
+				if cursorPos > 0 {
+					cmdBuffer = append(cmdBuffer[:cursorPos-1], cmdBuffer[cursorPos:]...)
+					cursorPos--
 				}
 			default:
 				if char >= 32 {
-					cmdBuffer = append(cmdBuffer, char)
+					// Insert at cursor
+					cmdBuffer = append(cmdBuffer, 0)
+					copy(cmdBuffer[cursorPos+1:], cmdBuffer[cursorPos:])
+					cmdBuffer[cursorPos] = char
+					cursorPos++
 				}
 			}
 		}
@@ -152,7 +197,11 @@ func processCommand(input string) bool {
 		}
 
 		target := cmdArgs[0]
-		active, jsonOut, depth, delay := parseScanFlags(cmdArgs[1:])
+		active, jsonOut, depth, delay, err := parseScanFlags(cmdArgs[1:])
+		if err != nil {
+			fmt.Printf("%s%s%s\n", ui.ColorRed, err, ui.ColorReset)
+			return false
+		}
 
 		crawl := true // Always enabled
 
@@ -177,7 +226,7 @@ func processCommand(input string) bool {
 }
 
 // flag parsing helper
-func parseScanFlags(args []string) (bool, bool, int, int) {
+func parseScanFlags(args []string) (bool, bool, int, int, error) {
 	active := false
 	jsonOut := false
 	depth := 2
@@ -204,9 +253,11 @@ func parseScanFlags(args []string) (bool, bool, int, int) {
 					i++
 				}
 			}
+		default:
+			return false, false, 0, 0, fmt.Errorf(msges.GetUIMessage("InteractiveErrorUnknownFlag", arg))
 		}
 	}
-	return active, jsonOut, depth, delay
+	return active, jsonOut, depth, delay, nil
 }
 
 func handleRepeater(args []string) {
@@ -276,6 +327,9 @@ func handleFuzzer(args []string) {
 	fmt.Printf("%sStarting Fuzzer on %s...%s\n", ui.ColorGreen, targetURL, ui.ColorReset)
 
 	client := &http.Client{Timeout: 5 * time.Second}
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 20) // 20 concurrent requests
+
 	scanner := bufio.NewScanner(file)
 
 	for scanner.Scan() {
@@ -284,29 +338,36 @@ func handleFuzzer(args []string) {
 			continue
 		}
 
-		url := strings.Replace(targetURL, "FUZZ", word, -1)
-		req, _ := http.NewRequest("GET", url, nil)
-		req.Header.Set("User-Agent", "PRS-Fuzzer/1.5.0")
+		wg.Add(1)
+		go func(w string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
-		resp, err := client.Do(req)
-		if err != nil {
-			continue
-		}
-		resp.Body.Close()
+			url := strings.Replace(targetURL, "FUZZ", w, -1)
+			req, _ := http.NewRequest("GET", url, nil)
+			req.Header.Set("User-Agent", "PRS-Fuzzer/1.5.0")
 
-		color := ui.ColorWhite
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			color = ui.ColorGreen
-		} else if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-			color = ui.ColorInfo // Assuming ColorInfo exists (Blue/Cyan)
-		} else if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-			color = ui.ColorLow // Assuming ColorLow exists (Yellow/Orange)
-		} else if resp.StatusCode >= 500 {
-			color = ui.ColorRed
-		}
+			resp, err := client.Do(req)
+			if err != nil {
+				return
+			}
+			resp.Body.Close()
 
-		fmt.Printf("[%s%d%s] %s\n", color, resp.StatusCode, ui.ColorReset, url)
-		time.Sleep(50 * time.Millisecond)
+			color := ui.ColorWhite
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				color = ui.ColorGreen
+			} else if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+				color = ui.ColorInfo // Assuming ColorInfo exists (Blue/Cyan)
+			} else if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+				color = ui.ColorLow // Assuming ColorLow exists (Yellow/Orange)
+			} else if resp.StatusCode >= 500 {
+				color = ui.ColorRed
+			}
+
+			fmt.Printf("[%s%d%s] %s\n", color, resp.StatusCode, ui.ColorReset, url)
+		}(word)
 	}
+	wg.Wait()
 	fmt.Printf("%sFuzzing completed.%s\n", ui.ColorGreen, ui.ColorReset)
 }

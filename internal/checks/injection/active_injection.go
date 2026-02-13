@@ -30,15 +30,20 @@ var (
 
 	sqlPayloads = []string{
 		"'", "\"", "`",
+		";", ")", // Syntax breakers
 		"' OR '1'='1", "\" OR \"1\"=\"1",
 		"' OR 1=1--", "\" OR 1=1--",
 		"') OR ('1'='1",
 		"' UNION SELECT NULL--",
 		"1' ORDER BY 1--+",
 		"1' ORDER BY 100--+",
-		"' OR '1'='1' #",
-		"' OR '1'='1'/*",
+		"' OR '1'='1' #", // MySQL
+		"' OR '1'='1'/*", // MySQL/MariaDB
 		"admin' --",
+		"' /*!50000OR*/ 1=1--", // MySQL version specific
+		"::int",                // PostgreSQL type cast error
+		"' + (SELECT 1) + '",   // MSSQL concatenation
+		"' || '1",              // Oracle concatenation
 	}
 
 	xssPayloadTemplates = []string{
@@ -75,6 +80,10 @@ var (
 		{"' OR '1'='1", "' AND '1'='0"},
 		{"\" OR \"1\"=\"1", "\" AND \"1\"=\"0"},
 		{" OR 1=1", " AND 1=0"},
+		{"' OR '1'='1' -- ", "' AND '1'='0' -- "},        // Login Bypass (Generic)
+		{"' OR '1'='1' #", "' AND '1'='0' #"},            // Login Bypass (MySQL)
+		{"' AND (SELECT 1)=1 #", "' AND (SELECT 1)=0 #"}, // MySQL
+		{"' AND 1::int=1--", "' AND 1::int=0--"},         // PostgreSQL
 	}
 )
 
@@ -121,9 +130,9 @@ ParamLoop:
 				if err != nil {
 					continue
 				}
-				defer resp.Body.Close()
 
 				bodyBytes, _ := engine.DecodeResponseBody(resp)
+				resp.Body.Close() // Close immediately to prevent resource leak in loop
 				bodyString := string(bodyBytes)
 				bodyStringLower := strings.ToLower(bodyString)
 
@@ -142,6 +151,7 @@ ParamLoop:
 						Confidence: report.ConfidenceLow,
 						Title:      msg.Title + " (Status 500)",
 						Message:    fmt.Sprintf("HTTP 500 Error triggered by payload: %s in param: %s", payload, param),
+						Evidence:   fmt.Sprintf("Status Code: %d", resp.StatusCode),
 						Fix:        msg.Fix,
 					})
 				}
@@ -156,6 +166,7 @@ ParamLoop:
 							Confidence: report.ConfidenceHigh,
 							Title:      msg.Title,
 							Message:    fmt.Sprintf(msg.Message, param, payload),
+							Evidence:   fmt.Sprintf("Found error pattern: '%s'", pattern),
 							Fix:        msg.Fix,
 						})
 						continue ParamLoop
@@ -170,7 +181,10 @@ ParamLoop:
 			newParamsTrue := cloneParams(queryParams)
 			newParamsTrue.Set(param, originalValue+bp.True)
 			u.RawQuery = newParamsTrue.Encode()
-			reqTrue, _ := http.NewRequest("GET", u.String(), nil)
+			reqTrue, err := http.NewRequest("GET", u.String(), nil)
+			if err != nil {
+				continue
+			}
 			respTrue, err := ctx.HTTPClient.Do(reqTrue)
 			if err != nil {
 				continue
@@ -181,7 +195,10 @@ ParamLoop:
 			newParamsFalse := cloneParams(queryParams)
 			newParamsFalse.Set(param, originalValue+bp.False)
 			u.RawQuery = newParamsFalse.Encode()
-			reqFalse, _ := http.NewRequest("GET", u.String(), nil)
+			reqFalse, err := http.NewRequest("GET", u.String(), nil)
+			if err != nil {
+				continue
+			}
 			respFalse, err := ctx.HTTPClient.Do(reqFalse)
 			if err != nil {
 				continue
@@ -204,6 +221,7 @@ ParamLoop:
 						Confidence: report.ConfidenceMedium,
 						Title:      "Boolean-based SQL Injection Detected",
 						Message:    fmt.Sprintf("Response difference detected between TRUE/FALSE payloads on param: %s.\nTrue Payload: %s\nFalse Payload: %s", param, bp.True, bp.False),
+						Evidence:   fmt.Sprintf("Response length difference: %d bytes (True: %d, False: %d)", diff, len(bodyTrue), len(bodyFalse)),
 						Fix:        msg.Fix,
 					})
 					continue ParamLoop
@@ -214,6 +232,7 @@ ParamLoop:
 
 	// Check POST Forms
 	findings = append(findings, checkPostSQLInjection(ctx)...)
+	findings = append(findings, checkPostBooleanSQLInjection(ctx)...)
 
 	return findings, nil
 }
@@ -261,9 +280,9 @@ func CheckReflectedXSS(ctx *ctxpkg.Context) ([]report.Finding, error) {
 				if err != nil {
 					continue
 				}
-				defer resp.Body.Close()
 
 				bodyBytes, _ := engine.DecodeResponseBody(resp)
+				resp.Body.Close() // Close immediately to prevent resource leak in loop
 				bodyString := string(bodyBytes)
 
 				if strings.Contains(bodyString, payload) && strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
@@ -275,6 +294,7 @@ func CheckReflectedXSS(ctx *ctxpkg.Context) ([]report.Finding, error) {
 						Confidence: report.ConfidenceMedium,
 						Title:      msg.Title,
 						Message:    fmt.Sprintf(msg.Message, param),
+						Evidence:   payload,
 						Fix:        msg.Fix,
 					})
 					found = true
@@ -300,6 +320,7 @@ func CheckBlindSQLInjection(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		fmt.Sprintf("'; SELECT pg_sleep(%d)--", delaySeconds),                                     // PostgreSQL
 		fmt.Sprintf("' WAITFOR DELAY '0:0:%d'--", delaySeconds),                                   // MSSQL
 		fmt.Sprintf("' OR (SELECT * FROM (SELECT(SLEEP(%d)))a)--", delaySeconds),                  // MySQL Alternative
+		fmt.Sprintf("' AND 1=DBMS_PIPE.RECEIVE_MESSAGE('a', %d)--", delaySeconds),                 // Oracle
 	}
 	return checkTimeBasedInjection(ctx, delaySeconds, payloads, "BLIND_SQLI_TIME_BASED", "BLIND_SQLI_TIME_BASED")
 }
@@ -380,6 +401,7 @@ func checkTimeBasedInjection(ctx *ctxpkg.Context, delaySeconds int, payloads []s
 						Confidence:                 report.ConfidenceMedium,
 						Title:                      msg.Title,
 						Message:                    fmt.Sprintf(msg.Message, param, delaySeconds),
+						Evidence:                   fmt.Sprintf("Response time: %.2f seconds", duration.Seconds()),
 						Fix:                        msg.Fix,
 						IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 					})
@@ -427,9 +449,9 @@ func CheckSSTI(ctx *ctxpkg.Context) ([]report.Finding, error) {
 			if err != nil {
 				continue
 			}
-			defer resp.Body.Close()
 
 			bodyBytes, _ := engine.DecodeResponseBody(resp)
+			resp.Body.Close() // Close immediately to prevent resource leak in loop
 			bodyString := string(bodyBytes)
 
 			if strings.Contains(bodyString, "49") && !strings.Contains(bodyString, "7*7") {
@@ -441,6 +463,7 @@ func CheckSSTI(ctx *ctxpkg.Context) ([]report.Finding, error) {
 					Confidence: report.ConfidenceHigh,
 					Title:      msg.Title,
 					Message:    fmt.Sprintf(msg.Message, param),
+					Evidence:   "The expression '7*7' was evaluated to '49' by the server.",
 					Fix:        msg.Fix,
 				})
 				break
@@ -485,6 +508,7 @@ func checkPostSQLInjection(ctx *ctxpkg.Context) []report.Finding {
 						Confidence: report.ConfidenceLow,
 						Title:      msg.Title + " (Status 500)",
 						Message:    fmt.Sprintf("HTTP 500 Error triggered by payload: %s in field: %s", payload, targetInput.Name),
+						Evidence:   fmt.Sprintf("Status Code: %d", resp.StatusCode),
 						Fix:        msg.Fix,
 					})
 				}
@@ -499,6 +523,7 @@ func checkPostSQLInjection(ctx *ctxpkg.Context) []report.Finding {
 							Confidence: report.ConfidenceHigh,
 							Title:      msg.Title,
 							Message:    fmt.Sprintf(msg.Message, targetInput.Name+" (POST)", payload),
+							Evidence:   fmt.Sprintf("Found error pattern: '%s'", pattern),
 							Fix:        msg.Fix,
 						})
 						return fs // Found definitive error, return immediately
@@ -533,6 +558,7 @@ func checkPostReflectedXSS(ctx *ctxpkg.Context) []report.Finding {
 						Confidence: report.ConfidenceMedium,
 						Title:      msg.Title + " (POST)",
 						Message:    fmt.Sprintf(msg.Message, targetInput.Name+" (POST)"),
+						Evidence:   payload,
 						Fix:        msg.Fix,
 					}}
 				}
@@ -559,11 +585,118 @@ func checkPostSSTI(ctx *ctxpkg.Context) []report.Finding {
 						Confidence: report.ConfidenceHigh,
 						Title:      msg.Title + " (POST)",
 						Message:    fmt.Sprintf(msg.Message, targetInput.Name+" (POST)"),
+						Evidence:   "The expression '7*7' was evaluated to '49' by the server.",
 						Fix:        msg.Fix,
 					}}
 				}
 				return nil
 			})...)
+	}
+	return findings
+}
+
+func checkPostBooleanSQLInjection(ctx *ctxpkg.Context) []report.Finding {
+	var findings []report.Finding
+	forms := extractForms(ctx)
+	for _, form := range forms {
+		if form.Method != "POST" {
+			continue
+		}
+
+		var targetURL string
+		if form.ActionURL == "" {
+			targetURL = ctx.FinalURL.String()
+		} else {
+			u, err := url.Parse(form.ActionURL)
+			if err == nil {
+				targetURL = ctx.FinalURL.ResolveReference(u).String()
+			} else {
+				continue
+			}
+		}
+
+		inputs := form.Inputs
+
+		for i, targetInput := range inputs {
+			if isProtectedField(targetInput) {
+				continue
+			}
+
+			for _, bp := range booleanPayloads {
+				// Helper to send request
+				sendReq := func(payload string) (*http.Response, []byte, error) {
+					formValues := url.Values{}
+					for j, input := range inputs {
+						if i == j {
+							formValues.Set(input.Name, input.Value+payload)
+						} else {
+							formValues.Set(input.Name, input.Value)
+						}
+					}
+					req, err := http.NewRequest("POST", targetURL, strings.NewReader(formValues.Encode()))
+					if err != nil {
+						return nil, nil, err
+					}
+					req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+					resp, err := ctx.HTTPClient.Do(req)
+					if err != nil {
+						return nil, nil, err
+					}
+					bodyBytes, _ := engine.DecodeResponseBody(resp)
+					resp.Body.Close()
+					return resp, bodyBytes, nil
+				}
+
+				respTrue, bodyTrue, errTrue := sendReq(bp.True)
+				if errTrue != nil {
+					continue
+				}
+
+				respFalse, bodyFalse, errFalse := sendReq(bp.False)
+				if errFalse != nil {
+					continue
+				}
+
+				// 1. Check Status Code Difference (e.g. Login Success 302 vs Fail 200)
+				if respTrue.StatusCode != respFalse.StatusCode {
+					msg := msges.GetMessage("BLIND_SQLI_TIME_BASED")
+					findings = append(findings, report.Finding{
+						ID:         "SQL_INJECTION_BOOLEAN",
+						Category:   string(checks.CategoryInputHandling),
+						Severity:   report.SeverityHigh,
+						Confidence: report.ConfidenceHigh,
+						Title:      "Boolean-based SQL Injection Detected (POST - Status Code)",
+						Message:    fmt.Sprintf("Status code difference detected between TRUE/FALSE payloads on POST param: %s.\nTrue Payload: %s (Status: %d)\nFalse Payload: %s (Status: %d)", targetInput.Name, bp.True, respTrue.StatusCode, bp.False, respFalse.StatusCode),
+						Evidence:   fmt.Sprintf("Status Code: %d vs %d", respTrue.StatusCode, respFalse.StatusCode),
+						Fix:        msg.Fix,
+					})
+					goto NextInput
+				}
+
+				// 2. Check Content Length Difference
+				if respTrue.StatusCode == respFalse.StatusCode {
+					diff := len(bodyTrue) - len(bodyFalse)
+					if diff < 0 {
+						diff = -diff
+					}
+					if diff > 50 && float64(diff) > float64(len(bodyTrue))*0.1 {
+						msg := msges.GetMessage("BLIND_SQLI_TIME_BASED")
+						findings = append(findings, report.Finding{
+							ID:         "SQL_INJECTION_BOOLEAN",
+							Category:   string(checks.CategoryInputHandling),
+							Severity:   report.SeverityHigh,
+							Confidence: report.ConfidenceMedium,
+							Title:      "Boolean-based SQL Injection Detected (POST)",
+							Message:    fmt.Sprintf("Response difference detected between TRUE/FALSE payloads on POST param: %s.\nTrue Payload: %s\nFalse Payload: %s", targetInput.Name, bp.True, bp.False),
+							Evidence:   fmt.Sprintf("Response length difference: %d bytes", diff),
+							Fix:        msg.Fix,
+						})
+						goto NextInput
+					}
+				}
+			}
+		NextInput:
+		}
 	}
 	return findings
 }
@@ -716,10 +849,6 @@ func testFormTimeBasedInjection(ctx *ctxpkg.Context, form crawler.Form, delaySec
 				continue
 			}
 
-			resp, err = handlePostRedirect(ctx, resp)
-			if err != nil {
-				continue
-			}
 			duration := time.Since(startTime)
 			resp.Body.Close()
 
@@ -731,12 +860,9 @@ func testFormTimeBasedInjection(ctx *ctxpkg.Context, form crawler.Form, delaySec
 					startVerify := time.Now()
 					respVerify, errVerify := ctx.HTTPClient.Do(reqVerify)
 					if errVerify == nil {
-						respVerify, errVerify = handlePostRedirect(ctx, respVerify)
-						if errVerify == nil {
-							respVerify.Body.Close()
-							if time.Since(startVerify).Seconds() < float64(delaySeconds) {
-								continue
-							}
+						respVerify.Body.Close()
+						if time.Since(startVerify).Seconds() < float64(delaySeconds) {
+							continue
 						}
 					}
 				}
@@ -749,6 +875,7 @@ func testFormTimeBasedInjection(ctx *ctxpkg.Context, form crawler.Form, delaySec
 					Confidence:                 report.ConfidenceMedium,
 					Title:                      msg.Title + " (POST)",
 					Message:                    fmt.Sprintf(msg.Message, targetInput.Name+" (POST)", delaySeconds),
+					Evidence:                   fmt.Sprintf("Response time: %.2f seconds", duration.Seconds()),
 					Fix:                        msg.Fix,
 					IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 				})
@@ -782,6 +909,9 @@ func handlePostRedirect(ctx *ctxpkg.Context, resp *http.Response) (*http.Respons
 		resp.Body.Close()
 
 		req2, err := http.NewRequest("GET", loc.String(), nil)
+		if err != nil {
+			return nil, err
+		}
 		return ctx.HTTPClient.Do(req2)
 	}
 	return resp, nil

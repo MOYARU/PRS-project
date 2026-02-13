@@ -63,6 +63,7 @@ func CheckXXE(ctx *ctxpkg.Context) ([]report.Finding, error) {
 			Confidence:                 report.ConfidenceHigh,
 			Title:                      msg.Title,
 			Message:                    fmt.Sprintf(msg.Message, canary),
+			Evidence:                   fmt.Sprintf("The canary string '%s' was reflected multiple times, indicating XML entity expansion.", canary),
 			Fix:                        msg.Fix,
 			IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 		})

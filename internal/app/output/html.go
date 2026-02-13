@@ -5,7 +5,6 @@ import (
 	"html/template"
 	"os"
 	"sort"
-	"strings"
 	"time"
 
 	msges "github.com/MOYARU/PRS-project/internal/messages"
@@ -43,6 +42,7 @@ type HTMLReportData struct {
 	UIFindings           string
 	UIRecommendation     string
 	UIChartTitle         string
+	UIEvidence           string
 	UIManualVerification string
 }
 
@@ -63,17 +63,10 @@ func SaveHTMLReport(target string, scannedURLs []string, findings []report.Findi
 
 	templateFindings := make([]TemplateFinding, len(findings))
 	for i, f := range findings {
-		desc := f.Message
-		var urls []string
-		if strings.Contains(f.Message, "\n\nPRS_AFFECTED_URLS_SEPARATOR\n") {
-			parts := strings.SplitN(f.Message, "\n\nPRS_AFFECTED_URLS_SEPARATOR\n", 2)
-			desc = parts[0]
-			urls = strings.Split(parts[1], "\n")
-		}
 		templateFindings[i] = TemplateFinding{
 			Finding:      f,
-			Description:  desc,
-			AffectedURLs: urls,
+			Description:  f.Message,
+			AffectedURLs: f.AffectedURLs,
 		}
 	}
 
@@ -95,6 +88,7 @@ func SaveHTMLReport(target string, scannedURLs []string, findings []report.Findi
 		UIFindings:           msges.GetUIMessage("HTMLFindings"),
 		UIRecommendation:     msges.GetUIMessage("HTMLRecommendation"),
 		UIChartTitle:         msges.GetUIMessage("HTMLChartTitle"),
+		UIEvidence:           msges.GetUIMessage("ConsoleEvidenceLabel"),
 		UIManualVerification: msges.GetUIMessage("UIManualVerification"),
 	}
 
@@ -162,6 +156,9 @@ const htmlTemplate = `
         .fix-box { background-color: #e8f5e9; padding: 15px; border-radius: 6px; border-left: 5px solid #4caf50; margin-top: 15px; }
         .fix-title { font-weight: bold; color: #2e7d32; display: block; margin-bottom: 5px; font-size: 1.05em; }
         .fix-content { color: #1b5e20; }
+        .evidence-box { background-color: #fff3e0; padding: 15px; border-radius: 6px; border-left: 5px solid #ff9800; margin-top: 15px; }
+        .evidence-title { font-weight: bold; color: #e65100; display: block; margin-bottom: 5px; font-size: 1.05em; }
+        .evidence-content code { color: #bf360c; background-color: #fbe9e7; padding: 3px 6px; border-radius: 4px; }
         .affected-urls-box { background-color: #e3f2fd; padding: 15px; border-radius: 6px; border-left: 5px solid #2196f3; margin-top: 15px; }
         .affected-urls-title { font-weight: bold; color: #1565c0; display: block; margin-bottom: 5px; font-size: 1.05em; }
         .affected-urls-list { list-style-type: none; padding: 0; margin: 0; font-family: monospace; font-size: 0.9em; word-break: break-all; }
@@ -214,8 +211,14 @@ const htmlTemplate = `
         <div class="details">
             <p><span class="label">Category:</span> {{.Category}}</p>
             <p><span class="label">Description:</span> {{.Description}}</p>
+            {{if .Evidence}}
+            <div class="evidence-box">
+                <span class="evidence-title">{{$.UIEvidence}}</span>
+                <div class="evidence-content"><code>{{.Evidence}}</code></div>
+            </div>
+            {{end}}
             <div class="fix-box">
-                <span class="fix-title">Fix: {{$.UIRecommendation}}</span>
+                <span class="fix-title">{{$.UIRecommendation}}</span>
                 <div class="fix-content">{{.Fix}}</div>
             </div>
             {{if .AffectedURLs}}

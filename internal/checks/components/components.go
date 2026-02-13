@@ -11,7 +11,18 @@ import (
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
-var commentRegex = regexp.MustCompile(`<!--.*?v?(\d+\.\d+(\.\d+)?).*?-->`)
+var (
+	commentRegex = regexp.MustCompile(`<!--.*?v?(\d+\.\d+(\.\d+)?).*?-->`)
+	metaRegex    = regexp.MustCompile(`<meta\s+name=["']generator["']\s+content=["']([^"']+)["']`)
+	scriptRegex  = regexp.MustCompile(`<script[^>]+src=["']([^"']+)["']`)
+	// Simple version check map: Software Name -> Min Safe Version
+	safeVersions = map[string]string{
+		"apache": "2.4.50",
+		"nginx":  "1.20.0",
+		"php":    "8.0.0",
+		"jquery": "3.5.0",
+	}
+)
 
 func CheckVulnerableComponents(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
@@ -30,13 +41,32 @@ func CheckVulnerableComponents(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	}
 
 	bodyString := string(ctx.BodyBytes)
-	matches := commentRegex.FindAllStringSubmatch(bodyString, -1)
 
+	// Check HTML Comments
+	matches := commentRegex.FindAllStringSubmatch(bodyString, -1)
 	for _, match := range matches {
 		fullComment := match[0]
-
 		if isOutdated(fullComment) {
 			findings = append(findings, createFinding(fmt.Sprintf("HTML Comment: %s", fullComment)))
+		}
+	}
+
+	// Check Meta Generator
+	metaMatches := metaRegex.FindAllStringSubmatch(bodyString, -1)
+	for _, match := range metaMatches {
+		content := match[1]
+		if isOutdated(content) {
+			findings = append(findings, createFinding(fmt.Sprintf("Meta Generator: %s", content)))
+		}
+	}
+
+	// Check Script Src
+	scriptMatches := scriptRegex.FindAllStringSubmatch(bodyString, -1)
+	for _, match := range scriptMatches {
+		src := match[1]
+		// Simple heuristic: check if src contains version numbers
+		if isOutdated(src) {
+			findings = append(findings, createFinding(fmt.Sprintf("Script Source: %s", src)))
 		}
 	}
 
@@ -46,20 +76,47 @@ func CheckVulnerableComponents(ctx *ctxpkg.Context) ([]report.Finding, error) {
 func isOutdated(versionStr string) bool {
 	v := strings.ToLower(versionStr)
 
-	if strings.Contains(v, "apache/2.2") || strings.Contains(v, "apache/2.0") {
-		return true
+	for software, safeVer := range safeVersions {
+		if strings.Contains(v, software) {
+			// Extract version from string (simple regex)
+			verRegex := regexp.MustCompile(`(\d+\.\d+(\.\d+)?)`)
+			verMatch := verRegex.FindString(v)
+			if verMatch != "" {
+				if compareVersions(verMatch, safeVer) < 0 {
+					return true
+				}
+			}
+		}
 	}
-	if strings.Contains(v, "php/5.") || strings.Contains(v, "php/4.") {
-		return true
-	}
-	if strings.Contains(v, "nginx/1.0") || strings.Contains(v, "nginx/0.") {
-		return true
-	}
-	if strings.Contains(v, "jquery v1.") || strings.Contains(v, "jquery 1.") {
-		return true
-	}
-	// Add more rules as needed
 	return false
+}
+
+func compareVersions(v1, v2 string) int {
+	// Simple version comparison
+	parts1 := strings.Split(v1, ".")
+	parts2 := strings.Split(v2, ".")
+
+	maxLen := len(parts1)
+	if len(parts2) > maxLen {
+		maxLen = len(parts2)
+	}
+
+	for i := 0; i < maxLen; i++ {
+		var n1, n2 int
+		if i < len(parts1) {
+			fmt.Sscanf(parts1[i], "%d", &n1)
+		}
+		if i < len(parts2) {
+			fmt.Sscanf(parts2[i], "%d", &n2)
+		}
+		if n1 < n2 {
+			return -1
+		}
+		if n1 > n2 {
+			return 1
+		}
+	}
+	return 0
 }
 
 func createFinding(info string) report.Finding {

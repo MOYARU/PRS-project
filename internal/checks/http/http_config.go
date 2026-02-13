@@ -63,6 +63,7 @@ func checkTRACEMethod(ctx *ctxpkg.Context) []report.Finding {
 				Severity: report.SeverityMedium,
 				Title:    msg.Title,
 				Message:  msg.Message,
+				Evidence: "Server responded with 200 OK to a TRACE request.",
 				Fix:      msg.Fix,
 			})
 		}
@@ -97,6 +98,7 @@ func checkOPTIONSMethod(ctx *ctxpkg.Context) []report.Finding {
 					Severity: report.SeverityLow,
 					Title:    msg.Title,
 					Message:  fmt.Sprintf(msg.Message, allowHeader),
+					Evidence: fmt.Sprintf("Allowed methods: %s", allowHeader),
 					Fix:      msg.Fix,
 				})
 			}
@@ -132,6 +134,7 @@ func checkPUTDELETEMethods(ctx *ctxpkg.Context) []report.Finding {
 				Severity: report.SeverityHigh,
 				Title:    msg.Title,
 				Message:  fmt.Sprintf(msg.Message, testURL),
+				Evidence: fmt.Sprintf("Received status code %d for PUT request.", putResp.StatusCode),
 				Fix:      msg.Fix,
 			})
 		}
@@ -153,6 +156,7 @@ func checkPUTDELETEMethods(ctx *ctxpkg.Context) []report.Finding {
 				Severity: report.SeverityHigh,
 				Title:    msg.Title,
 				Message:  fmt.Sprintf(msg.Message, testURL),
+				Evidence: fmt.Sprintf("Received status code %d for DELETE request.", deleteResp.StatusCode),
 				Fix:      msg.Fix,
 			})
 		}

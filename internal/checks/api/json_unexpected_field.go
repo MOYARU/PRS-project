@@ -61,6 +61,7 @@ func CheckJSONUnexpectedField(ctx *ctxpkg.Context) ([]report.Finding, error) {
 			Confidence:                 report.ConfidenceMedium,
 			Title:                      msg.Title,
 			Message:                    msg.Message,
+			Evidence:                   "Server responded with 200 OK to a POST request containing an unexpected JSON field ('prs_unexpected_field').",
 			Fix:                        msg.Fix,
 			IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 		})

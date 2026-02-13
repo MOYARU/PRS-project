@@ -6,13 +6,13 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 
 	"golang.org/x/net/html"
 
 	"github.com/MOYARU/PRS-project/internal/checks"
 	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context" // New import with alias
-	"github.com/MOYARU/PRS-project/internal/engine"
-	msges "github.com/MOYARU/PRS-project/internal/messages" // New import for messages
+	msges "github.com/MOYARU/PRS-project/internal/messages"        // New import for messages
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
@@ -29,44 +29,62 @@ var secretPatterns = []struct {
 
 func CheckWebContentExposure(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
+	var mu sync.Mutex
 
 	// Active Checks: File probes
 	if ctx.Mode == ctxpkg.Active {
-		// robots.txt
-		findings = append(findings, checkPathExposure(ctx, "/robots.txt", "ROBOTS_TXT_EXPOSED", checks.CategoryFileExposure)...)
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, 10) // Limit concurrency
 
-		// sitemap.xml
-		findings = append(findings, checkPathExposure(ctx, "/sitemap.xml", "SITEMAP_XML_EXPOSED", checks.CategoryFileExposure)...)
-
-		// security.txt
-		findings = append(findings, checkPathExposure(ctx, "/.well-known/security.txt", "SECURITY_TXT_EXPOSED", checks.CategoryFileExposure)...)
-
-		// .well-known/ directory listing
-		findings = append(findings, checkPathExposure(ctx, "/.well-known/", "WELL_KNOWN_EXPOSED", checks.CategoryFileExposure)...)
-
-		// .git exposure
-		findings = append(findings, checkPathExposure(ctx, "/.git/HEAD", "GIT_HEAD_EXPOSED", checks.CategoryFileExposure)...)
-		findings = append(findings, checkPathExposure(ctx, "/.git/config", "GIT_CONFIG_EXPOSED", checks.CategoryFileExposure)...)
-
-		// .env exposure
-		findings = append(findings, checkPathExposure(ctx, "/.env", "ENV_EXPOSED", checks.CategoryFileExposure)...)
-
-		// CI/CD file traces (e.g., .travis.yml, .gitlab-ci.yml, Jenkinsfile)
-		findings = append(findings, checkPathExposure(ctx, "/.travis.yml", "TRAVIS_YML_EXPOSED", checks.CategoryFileExposure)...)
-		findings = append(findings, checkPathExposure(ctx, "/.gitlab-ci.yml", "GITLAB_CI_YML_EXPOSED", checks.CategoryFileExposure)...)
-		findings = append(findings, checkPathExposure(ctx, "/Jenkinsfile", "JENKINSFILE_EXPOSED", checks.CategoryFileExposure)...)
-
-		findings = append(findings, checkPathExposure(ctx, "/actuator", "ACTUATOR_ENDPOINT_EXPOSED", checks.CategoryInfrastructure)...)
-		findings = append(findings, checkPathExposure(ctx, "/debug", "DEBUG_ENDPOINT_EXPOSED", checks.CategoryInfrastructure)...)
+		probes := []struct {
+			path     string
+			msgID    string
+			category checks.Category
+		}{
+			{"/robots.txt", "ROBOTS_TXT_EXPOSED", checks.CategoryFileExposure},
+			{"/sitemap.xml", "SITEMAP_XML_EXPOSED", checks.CategoryFileExposure},
+			{"/.well-known/security.txt", "SECURITY_TXT_EXPOSED", checks.CategoryFileExposure},
+			{"/.well-known/", "WELL_KNOWN_EXPOSED", checks.CategoryFileExposure},
+			{"/.git/HEAD", "GIT_HEAD_EXPOSED", checks.CategoryFileExposure},
+			{"/.git/config", "GIT_CONFIG_EXPOSED", checks.CategoryFileExposure},
+			{"/.env", "ENV_EXPOSED", checks.CategoryFileExposure},
+			{"/.travis.yml", "TRAVIS_YML_EXPOSED", checks.CategoryFileExposure},
+			{"/.gitlab-ci.yml", "GITLAB_CI_YML_EXPOSED", checks.CategoryFileExposure},
+			{"/Jenkinsfile", "JENKINSFILE_EXPOSED", checks.CategoryFileExposure},
+			{"/actuator", "ACTUATOR_ENDPOINT_EXPOSED", checks.CategoryInfrastructure},
+			{"/debug", "DEBUG_ENDPOINT_EXPOSED", checks.CategoryInfrastructure},
+		}
 
 		// Backup files
 		backupExtensions := []string{".bak", ".old", ".swp", "~"}
 		path := ctx.FinalURL.Path
 		if path != "" && path != "/" {
 			for _, ext := range backupExtensions {
-				findings = append(findings, checkPathExposure(ctx, path+ext, "BACKUP_FILE_EXPOSED", checks.CategoryFileExposure)...)
+				probes = append(probes, struct {
+					path, msgID string
+					category    checks.Category
+				}{path + ext, "BACKUP_FILE_EXPOSED", checks.CategoryFileExposure})
 			}
 		}
+
+		for _, p := range probes {
+			wg.Add(1)
+			go func(p struct {
+				path, msgID string
+				category    checks.Category
+			}) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				fs := checkPathExposure(ctx, p.path, p.msgID, p.category)
+				if len(fs) > 0 {
+					mu.Lock()
+					findings = append(findings, fs...)
+					mu.Unlock()
+				}
+			}(p)
+		}
+		wg.Wait()
 	}
 
 	// K. 클라이언트(브라우저) 보안
@@ -97,13 +115,18 @@ func checkPathExposure(ctx *ctxpkg.Context, path string, msgID string, category 
 	var findings []report.Finding
 	targetURL := resolveRelativeURL(ctx.FinalURL, path)
 
-	resp, err := engine.FetchWithTLSConfig(targetURL.String(), nil) // Use default client
+	req, err := http.NewRequest("GET", targetURL.String(), nil)
 	if err != nil {
 		return findings
 	}
-	defer resp.Response.Body.Close()
 
-	if resp.Response.StatusCode == http.StatusOK {
+	resp, err := ctx.HTTPClient.Do(req)
+	if err != nil {
+		return findings
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
 		msg := msges.GetMessage(msgID)
 		findings = append(findings, report.Finding{
 			ID:                         strings.ReplaceAll(strings.ToUpper(path), "/", "_") + "_EXPOSED",
@@ -111,6 +134,7 @@ func checkPathExposure(ctx *ctxpkg.Context, path string, msgID string, category 
 			Severity:                   report.SeverityMedium,
 			Title:                      msg.Title,
 			Message:                    fmt.Sprintf(msg.Message, path),
+			Evidence:                   fmt.Sprintf("Path %s is accessible with status 200 OK.", path),
 			Fix:                        msg.Fix,
 			IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 		})
@@ -157,6 +181,7 @@ func checkMixedContent(ctx *ctxpkg.Context, doc *html.Node) []report.Finding {
 								Severity:                   report.SeverityMedium,
 								Title:                      msg.Title,
 								Message:                    fmt.Sprintf(msg.Message, a.Val),
+								Evidence:                   fmt.Sprintf("Insecure resource loaded: %s", a.Val),
 								Fix:                        msg.Fix,
 								IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 							})
@@ -191,6 +216,7 @@ func checkSecrets(content string) []report.Finding {
 				Severity:                   report.SeverityHigh,
 				Title:                      msg.Title,
 				Message:                    fmt.Sprintf(msg.Message, pattern.Name, foundValue),
+				Evidence:                   fmt.Sprintf("Pattern: %s, Value: %s", pattern.Name, foundValue),
 				Fix:                        msg.Fix,
 				IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 			})
@@ -209,6 +235,7 @@ func checkConsoleUsage(content string) []report.Finding {
 			Severity:                   report.SeverityInfo,
 			Title:                      msg.Title,
 			Message:                    fmt.Sprintf(msg.Message, "console.* usage detected"),
+			Evidence:                   "Found 'console.log', 'console.debug', or 'console.error' in response body.",
 			Fix:                        msg.Fix,
 			IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 		})
@@ -244,6 +271,7 @@ func checkIframeSandbox(ctx *ctxpkg.Context, doc *html.Node) []report.Finding {
 					Severity:                   report.SeverityMedium,
 					Title:                      msg.Title,
 					Message:                    fmt.Sprintf(msg.Message, src),
+					Evidence:                   fmt.Sprintf("Iframe without sandbox attribute. src: %s", src),
 					Fix:                        msg.Fix,
 					IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 				})
@@ -290,6 +318,7 @@ func checkInlineScripts(ctx *ctxpkg.Context, doc *html.Node) []report.Finding {
 						Severity:                   report.SeverityMedium,
 						Title:                      msg.Title,
 						Message:                    msg.Message,
+						Evidence:                   "Inline <script> tag found without a strict CSP.",
 						Fix:                        msg.Fix,
 						IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 					})

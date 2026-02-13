@@ -2,6 +2,7 @@ package deserialization
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"strings"
@@ -14,6 +15,11 @@ import (
 
 func CheckInsecureDeserialization(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
+
+	// Active Mode: Payload Injection (Optional/Safe check)
+	if ctx.Mode == ctxpkg.Active {
+		// TODO: Implement safe gadget probe (e.g., sleep or specific echo)
+	}
 
 	u, _ := url.Parse(ctx.FinalURL.String())
 	for param, values := range u.Query() {
@@ -36,26 +42,47 @@ func CheckInsecureDeserialization(ctx *ctxpkg.Context) ([]report.Finding, error)
 }
 
 func isSerializedData(value string) bool {
+	// 0. Try URL Decode first
+	if unescaped, err := url.QueryUnescape(value); err == nil && unescaped != value {
+		value = unescaped
+	}
+
 	// 1. Check for Base64 encoding first
 	decoded, err := base64.StdEncoding.DecodeString(value)
 	if err == nil && len(decoded) > 4 {
-		// Check for Java Serialization Magic Bytes (AC ED 00 05)
-		if strings.HasPrefix(string(decoded), "\xac\xed\x00\x05") {
-			return true
-		}
-
-		if strings.Contains(string(decoded), "cos") && strings.Contains(string(decoded), "system") {
+		if checkSignatures(string(decoded)) {
 			return true
 		}
 	}
 
-	if strings.HasPrefix(value, "O:") || strings.HasPrefix(value, "a:") {
-		// Further validation could be done here
+	// 2. Check for Hex encoding
+	if decodedHex, err := hex.DecodeString(value); err == nil && len(decodedHex) > 4 {
+		if checkSignatures(string(decodedHex)) {
+			return true
+		}
+	}
+
+	// 3. Check raw string
+	return checkSignatures(value)
+}
+
+func checkSignatures(value string) bool {
+	// Java Serialization: AC ED 00 05
+	// Stricter: Look for 'sr' (0x73 0x72) which is TC_CLASSDESC often following magic bytes
+	if strings.HasPrefix(value, "\xac\xed\x00\x05") && strings.Contains(value, "\x73\x72") {
 		return true
 	}
 
-	// 3. Check for Python Pickle (unencoded)
-	if strings.HasPrefix(value, "(lp") || strings.HasPrefix(value, "gASV") { // gASV is base64 encoded pickle header often
+	// PHP Serialization
+	if strings.HasPrefix(value, "O:") || strings.HasPrefix(value, "a:") {
+		// Simple heuristic for PHP object or array
+		return true
+	}
+
+	// Python Pickle
+	// Stricter: "cos" + "system" + "R" (REDUCE opcode) or specific protocol versions
+	if (strings.Contains(value, "cos") && strings.Contains(value, "system") && strings.Contains(value, "R")) ||
+		strings.HasPrefix(value, "\x80\x03") || strings.HasPrefix(value, "\x80\x04") {
 		return true
 	}
 

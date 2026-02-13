@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 )
 
 type FetchResult struct {
@@ -60,6 +61,21 @@ func Fetch(target string) (*FetchResult, error) {
 
 	result.FinalURL = resp.Request.URL
 	return result, nil
+}
+
+type DelayedTransport struct {
+	Transport http.RoundTripper
+	Delay     time.Duration
+}
+
+func (t *DelayedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.Delay > 0 {
+		time.Sleep(t.Delay)
+	}
+	if t.Transport == nil {
+		return http.DefaultTransport.RoundTrip(req)
+	}
+	return t.Transport.RoundTrip(req)
 }
 
 func fetchOnce(target string, allowRedirect bool, tlsConfig *tls.Config) (*http.Response, error) {

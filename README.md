@@ -1,62 +1,73 @@
 ```text
-      :::::::::       :::::::::       :::::::: 
-     :+:    :+:      :+:    :+:     :+:    :+: 
-    +:+    +:+      +:+    +:+     +:+         
-   +#++:++#+       +#++:++#:      +#++:++#++   
-  +#+             +#+    +#+            +#+    
- #+#             #+#    #+#     #+#    #+#     
-###             ###    ###      ########  
+██████╗ ██████╗ ███████╗
+██╔══██╗██╔══██╗██╔════╝
+██████╔╝██████╔╝███████╗
+██╔═══╝ ██╔══██╗╚════██║
+██║     ██║  ██║███████║
+╚═╝     ╚═╝  ╚═╝╚══════╝
 ```
-# PRS v1.6.0
-### *Passive Reconnaissance Scanner*
-### PRS focuses on risk visibility, not exploitation.
+<p align="center">
+  <h1>PRS v1.6.0</h1>
+  <h3>Passive Reconnaissance Scanner</h3>
+  <p>
+    <strong>Defensive-First Web Security Scanner</strong><br>
+  </p>
 
-## Overview
-PRS is a terminal-based web security scanner focused on identifying security misconfigurations, insecure defaults, 
-and design-level risks.
-It prioritizes clarity and safety over aggressive exploitation, providing actionable insights without attempting to compromise the target system.
+  <p>
+    <a href="https://github.com/MOYARU/PRS-project/releases">
+      <img src="https://img.shields.io/github/v/release/MOYARU/PRS-project?color=5865F2" alt="Release">
+    </a>
+    <a href="https://github.com/MOYARU/PRS-project/stargazers">
+      <img src="https://img.shields.io/github/stars/MOYARU/PRS-project?style=social" alt="Stars">
+    </a>
+    <img src="https://img.shields.io/github/go-mod/go-version/MOYARU/PRS-project?color=00ADD8" alt="Go">
+    <img src="https://img.shields.io/github/license/MOYARU/PRS-project?color=green" alt="MIT">
+  </p>
+</p>
 
+---
+ 
+### Key Features
+- **Real-time Language Switching**: Toggle between English and Korean instantly.
+- **Intuitive Output**: Clean console output + detailed HTML reports.
+- **Crawling & Form Extraction**: Automatically discovers URLs and extracts form data.
+- **Defensive Focus**: Identifies vulnerabilities without direct exploitation.
 
-## Design Philosophy
-PRS is designed with the following 
+## Build & Installation
 ```
-principles:
-1. Prefer passive analysis over active exploitation
-2. Detect misconfigurations and insecure design patterns
-3. Avoid intrusive or destructive behavior
-4. Clearly communicate uncertainty and possible false positives
-PRS does not attempt to exploit vulnerabilities.
-Instead, it highlights conditions that may lead to security issues.
-```
+git clone https://github.com/MOYARU/PRS-project.git
 
-## Output Example
-```
-[HIGH] IDOR Possible
-Numeric identifier changed: /resource/123 → /resource/124
-Response behavior differed
-Manual verification recommended
-```
+cd PRS-project
 
-## Build
-직접 빌드는 GO 환경이 필요합니다.
-go build 와 본인의 운영체제를 선택하여 직접 빌드가 가능합니다.
+go build -o prs.exe
 
-EXE 파일을 설치했다면
-해당 EXE 파일 위치를 터미널로 열어서
-`.\PRS`
-명령어로 실행이 가능합니다.
+./prs
 
-**prs (example.com) 으로 스캔합니다.**
-
-#### 옵션 소개
-```
-1. --active : active모드를 이용합니다.
-2. --depth : 크롤링 깊이를 설정합니다(기본값 : 2)
-3. --json
-4. --delay : 리퀘스트 사이에 딜레이를 넣습니다. 서버의 과부하를 방지합니다.
+prs example.com
 ```
 
-한글 / 영어 선택이 추가되었으며 방향키로 선택 가능합니다.
+or
+```
+make
 
-## roadmap
-검사를 좀더 진득하게(?)
+make deps
+
+make run
+```
+
+### start
+
+**./prs**
+
+```bash
+# scan
+prs https://example.com
+
+prs https://example.com --depth 3 --json
+
+# active mode
+prs https://example.com --active
+
+# delay 300ms
+prs https://example.com --delay 300
+```

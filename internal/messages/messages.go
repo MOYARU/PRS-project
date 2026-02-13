@@ -13,7 +13,7 @@ const (
 )
 
 var (
-	CurrentLanguage = LangKO
+	CurrentLanguage = LangEN
 	langMu          sync.RWMutex
 )
 
@@ -86,7 +86,7 @@ var findingMessages = map[string]rawMessageDetail{
 		FixEN:                      "Configure the server not to redirect from HTTPS to HTTP.",
 		IsPotentiallyFalsePositive: false,
 	},
-	"TLS_VERSION_SUPPORTED_V": { // %d is not part of the ID, it's a format specifier
+	"TLS_VERSION_SUPPORTED_V": { // %s is not part of the ID, it's a format specifier
 		TitleKO:                    "TLS %s 지원",
 		TitleEN:                    "TLS %s Supported",
 		MessageKO:                  "대상 서버가 더 이상 사용되지 않는 안전하지 않은 TLS %s 프로토콜을 지원합니다.",
@@ -95,7 +95,7 @@ var findingMessages = map[string]rawMessageDetail{
 		FixEN:                      "Disable legacy protocols like SSLv3, TLS 1.0, and TLS 1.1 in the web server's SSL/TLS settings. It is recommended to enable only TLS 1.2 and TLS 1.3 for security.",
 		IsPotentiallyFalsePositive: false,
 	},
-	"TLS_VERSION_DETECTED_V": { // %d is not part of the ID, it's a format specifier
+	"TLS_VERSION_DETECTED_V": { // %s is not part of the ID, it's a format specifier
 		TitleKO:                    "취약한 TLS %s 사용",
 		TitleEN:                    "Vulnerable TLS %s Used",
 		MessageKO:                  "대상 서버가 취약한 TLS %s 프로토콜을 사용하여 연결을 설정했습니다.",
@@ -891,6 +891,14 @@ var findingMessages = map[string]rawMessageDetail{
 		TitleKO: "OS 커맨드 인젝션 점검 (시간 기반)",
 		TitleEN: "OS Command Injection Check (Time-based)",
 	},
+	"SSTI_INJECTION": {
+		TitleKO: "SSTI (Server-Side Template Injection) 점검",
+		TitleEN: "SSTI (Server-Side Template Injection) Check",
+	},
+	"XXE_INJECTION": {
+		TitleKO: "XXE (XML External Entity) 점검",
+		TitleEN: "XXE (XML External Entity) Check",
+	},
 	"SSRF_DETECTION": {
 		TitleKO: "SSRF (Server-Side Request Forgery) 탐지",
 		TitleEN: "SSRF Detection",
@@ -902,6 +910,15 @@ var findingMessages = map[string]rawMessageDetail{
 	"VULNERABLE_COMPONENTS": {
 		TitleKO: "취약한 컴포넌트 버전 식별",
 		TitleEN: "Vulnerable Component Identification",
+	},
+	"MISSING_SECURITY_HEADERS": {
+		TitleKO:                    "보안 헤더 누락",
+		TitleEN:                    "Missing Security Headers",
+		MessageKO:                  "다음 보안 헤더가 응답에 포함되지 않았습니다: %s",
+		MessageEN:                  "The following security headers are missing from the response: %s",
+		FixKO:                      "웹 서버 설정 또는 애플리케이션 코드에서 누락된 보안 헤더를 추가하여 보안을 강화하십시오.",
+		FixEN:                      "Add the missing security headers in the web server configuration or application code to enhance security.",
+		IsPotentiallyFalsePositive: false,
 	},
 }
 
@@ -994,6 +1011,10 @@ var uiMessages = map[string]map[Language]string{
 	"ConsoleConfidenceLabel": {
 		LangKO: "신뢰도",
 		LangEN: "Confidence",
+	},
+	"ConsoleEvidenceLabel": {
+		LangKO: "증거",
+		LangEN: "Evidence",
 	},
 	"ConsoleScanSummaryTitle": {
 		LangKO: "--- 스캔 요약 ---",
@@ -1123,9 +1144,17 @@ var uiMessages = map[string]map[Language]string{
 		LangKO: "스캔 실행 중 오류 발생: %v",
 		LangEN: "Error running scan: %v",
 	},
+	"ScanProgress": {
+		LangKO: "\r[진행률] %d/%d (%s) - %s\x1b[K", // \x1b[K는 줄의 나머지 부분을 지움
+		LangEN: "\r[Progress] %d/%d (%s) - %s\x1b[K",
+	},
 	"InteractiveErrorUnknown": {
-		LangKO: "알 수 없는 명령어: %s. 'help'를 입력해보세요.",
-		LangEN: "Unknown command: %s. Type 'help'.",
+		LangKO: "알 수 없는 명령어: %s",
+		LangEN: "Unknown command: %s",
+	},
+	"InteractiveErrorUnknownFlag": {
+		LangKO: "알 수 없는 명령어: %s",
+		LangEN: "Unknown flag: %s",
 	},
 	"AskSaveHTML": {
 		LangKO: "스캔이 종료된 후 HTML 리포트를 저장하시겠습니까?",

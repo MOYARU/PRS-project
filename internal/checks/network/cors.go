@@ -6,7 +6,6 @@ import (
 
 	"github.com/MOYARU/PRS-project/internal/checks"
 	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context"
-	"github.com/MOYARU/PRS-project/internal/engine"
 	msges "github.com/MOYARU/PRS-project/internal/messages"
 	"github.com/MOYARU/PRS-project/internal/report"
 )
@@ -35,8 +34,7 @@ func CheckCORSConfiguration(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		}
 		req.Header.Set("Origin", testOrigin)
 
-		client := engine.NewHTTPClient(false, nil)
-		resp, err := client.Do(req)
+		resp, err := ctx.HTTPClient.Do(req)
 		if err != nil {
 			return findings, err
 		}

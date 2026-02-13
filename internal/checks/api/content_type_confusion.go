@@ -43,6 +43,7 @@ func CheckContentTypeConfusion(ctx *ctxpkg.Context) ([]report.Finding, error) {
 				Confidence:                 report.ConfidenceMedium,
 				Title:                      msg.Title,
 				Message:                    msg.Message,
+				Evidence:                   "Request with Content-Type: text/plain was processed as JSON.",
 				Fix:                        msg.Fix,
 				IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 			})
@@ -71,6 +72,7 @@ func CheckContentTypeConfusion(ctx *ctxpkg.Context) ([]report.Finding, error) {
 			Confidence:                 report.ConfidenceMedium,
 			Title:                      msg.Title,
 			Message:                    msg.Message,
+			Evidence:                   "Server returned application/json despite Accept: text/html header.",
 			Fix:                        msg.Fix,
 			IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 		})
@@ -124,6 +126,7 @@ func checkJSONP(ctx *ctxpkg.Context) []report.Finding {
 					Severity: report.SeverityMedium,
 					Title:    msg.Title,
 					Message:  fmt.Sprintf(msg.Message, paramName),
+					Evidence: fmt.Sprintf("Callback parameter '%s' triggered a JSONP response.", paramName),
 					Fix:      msg.Fix,
 				})
 				return findings // Found it, no need to check other param names

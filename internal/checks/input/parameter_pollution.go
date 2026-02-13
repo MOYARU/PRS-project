@@ -28,8 +28,6 @@ func CheckParameterPollution(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		return findings, nil
 	}
 
-	client := engine.NewHTTPClient(false, nil)
-
 	for param, values := range queryParams {
 		if len(values) == 0 {
 			continue
@@ -47,7 +45,7 @@ func CheckParameterPollution(ctx *ctxpkg.Context) ([]report.Finding, error) {
 			continue
 		}
 
-		resp, err := client.Do(req)
+		resp, err := ctx.HTTPClient.Do(req)
 		if err != nil {
 			continue
 		}

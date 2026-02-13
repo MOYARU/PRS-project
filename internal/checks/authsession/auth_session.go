@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/MOYARU/PRS-project/internal/checks"
 	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context"
@@ -16,7 +17,7 @@ import (
 func CheckAuthSessionHardening(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
 
-	loginPageURL := findLoginPage(ctx.InitialURL.String())
+	loginPageURL := findLoginPage(ctx.InitialURL.String(), ctx.HTTPClient)
 	if loginPageURL != "" {
 		findings = append(findings, checkLoginPageHTTPS(ctx, loginPageURL)...)
 	}
@@ -47,25 +48,59 @@ func CheckSessionManagement(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	return findings, nil
 }
 
-func findLoginPage(targetURL string) string {
+func findLoginPage(targetURL string, client *http.Client) string {
 	u, err := url.Parse(targetURL)
 	if err != nil {
 		return ""
 	}
 
+	var foundURL string
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 5)
+
 	// Common login paths
-	for _, path := range []string{"/login", "/signin", "/account/login", "/user/login", "/admin/login"} {
-		testURL := u.Scheme + "://" + u.Host + path
-		resp, err := engine.FetchWithTLSConfig(testURL, nil) // Use default client
-		if err == nil && resp.Response != nil && resp.Response.StatusCode == http.StatusOK {
-			resp.Response.Body.Close()
-			return testURL
-		}
-		if resp != nil && resp.Response != nil {
-			resp.Response.Body.Close()
-		}
+	paths := []string{"/login", "/signin", "/account/login", "/user/login", "/admin/login"}
+	for _, path := range paths {
+		wg.Add(1)
+		go func(path string) {
+			defer wg.Done()
+
+			mu.Lock()
+			if foundURL != "" {
+				mu.Unlock()
+				return
+			}
+			mu.Unlock()
+
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			testURL := u.Scheme + "://" + u.Host + path
+			req, err := http.NewRequest("GET", testURL, nil)
+			if err != nil {
+				return
+			}
+			resp, err := client.Do(req)
+			if err == nil && resp != nil && resp.StatusCode == http.StatusOK {
+				// Check body for login keywords to reduce false positives
+				bodyBytes, _ := engine.DecodeResponseBody(resp)
+				resp.Body.Close()
+				bodyString := strings.ToLower(string(bodyBytes))
+				if strings.Contains(bodyString, "password") || strings.Contains(bodyString, "login") || strings.Contains(bodyString, "signin") {
+					mu.Lock()
+					if foundURL == "" {
+						foundURL = testURL
+					}
+					mu.Unlock()
+				}
+			} else if resp != nil {
+				resp.Body.Close()
+			}
+		}(path)
 	}
-	return ""
+	wg.Wait()
+	return foundURL
 }
 
 func checkLoginPageHTTPS(ctx *ctxpkg.Context, loginPageURL string) []report.Finding {
@@ -104,7 +139,8 @@ func checkCookieAttributes(resp *http.Response) []report.Finding {
 			strings.Contains(strings.ToLower(cookie.Name), "phpsessid") ||
 			strings.Contains(strings.ToLower(cookie.Name), "aspsessionid") ||
 			strings.Contains(strings.ToLower(cookie.Name), "auth") ||
-			strings.Contains(strings.ToLower(cookie.Name), "id")
+			strings.Contains(strings.ToLower(cookie.Name), "id") ||
+			strings.Contains(strings.ToLower(cookie.Name), "_session")
 
 		// Secure Flag
 		if !cookie.Secure && strings.HasPrefix(strings.ToLower(resp.Request.URL.Scheme), "https") {
@@ -135,7 +171,7 @@ func checkCookieAttributes(resp *http.Response) []report.Finding {
 		}
 
 		// Session Cookie Expiration
-		if isPotentiallySessionRelated && cookie.Expires.IsZero() {
+		if isPotentiallySessionRelated && cookie.Expires.IsZero() && cookie.MaxAge <= 0 {
 			msg := msges.GetMessage("SESSION_COOKIE_NO_EXPIRATION")
 			findings = append(findings, report.Finding{
 				ID:                         "SESSION_COOKIE_NO_EXPIRATION",
