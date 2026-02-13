@@ -48,11 +48,13 @@ prs example.com
 
 or
 ```
+use makefile to build
+
 make
 
-make deps
-
 make run
+
+make deps
 ```
 
 ### start
