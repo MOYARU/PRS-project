@@ -63,6 +63,10 @@ make run
 
 ## Quick Start
 
+```
+./prs
+```
+
 ### Basic scan
 ```bash
 prs https://example.com
