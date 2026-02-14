@@ -1,6 +1,15 @@
 ﻿# PRS v1.8.0
-
-Defensive-first web security scanner for recon, misconfiguration checks, and practical reporting.
+  <p>
+    <a href="https://github.com/MOYARU/PRS-project/releases">
+      <img src="https://img.shields.io/github/v/release/MOYARU/PRS-project?color=5865F2" alt="Release">
+    </a>
+    <a href="https://github.com/MOYARU/PRS-project/stargazers">
+      <img src="https://img.shields.io/github/stars/MOYARU/PRS-project?style=social" alt="Stars">
+    </a>
+    <img src="https://img.shields.io/github/go-mod/go-version/MOYARU/PRS-project?color=00ADD8" alt="Go">
+    <img src="https://img.shields.io/github/license/MOYARU/PRS-project?color=green" alt="MIT">
+  </p>
+</p>
 
 ## Overview
 
@@ -82,6 +91,7 @@ prs https://example.com --active
 ```
 
 ### Crawl depth and delay
+
 ```bash
 prs https://example.com --depth 3 --delay 300
 ```
