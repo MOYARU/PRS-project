@@ -88,7 +88,7 @@ func fetchOnce(target string, allowRedirect bool, tlsConfig *tls.Config) (*http.
 		return nil, err
 	}
 
-	req.Header.Set("User-Agent", "PRS/1.8.0 (defensive security scanner)")
+	req.Header.Set("User-Agent", "PRS/2.0.0 (defensive security scanner)")
 
 	return client.Do(req)
 }
