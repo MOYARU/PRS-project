@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -22,14 +24,16 @@ import (
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
-func RunScan(target string, activeScan bool, crawl bool, depth int, jsonOutput bool, htmlOutput bool, delay int) error {
-	// Normalize target URL: Add http:// scheme if missing (supports IP addresses and domains)
-	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
-		if isHTTPSReachable(target) {
-			target = "https://" + target
-		} else {
-			target = "http://" + target
-		}
+func RunScan(target string, activeScan bool, crawl bool, respectRobots bool, depth int, jsonOutput bool, htmlOutput bool, delay int) error {
+	normalizedTarget, err := normalizeTarget(target)
+	if err != nil {
+		return err
+	}
+	target = normalizedTarget
+
+	// Fast-fail for invalid/non-existent hosts to improve user feedback.
+	if err := validateTargetHost(target); err != nil {
+		return fmt.Errorf("target is not reachable: %w", err)
 	}
 
 	// Setup context with cancellation
@@ -85,10 +89,14 @@ func RunScan(target string, activeScan bool, crawl bool, depth int, jsonOutput b
 		if err != nil {
 			return fmt.Errorf("failed to initialize crawler: %w", err)
 		}
+		c.SetRespectRobots(respectRobots)
 		targets = c.Start(ctx) // Pass context
 		fmt.Printf("%s%s%s\n", ui.ColorGreen, msges.GetUIMessage("CrawlingComplete", len(targets)), ui.ColorReset)
 	} else {
 		targets = []string{target}
+	}
+	if len(targets) == 0 {
+		return fmt.Errorf("no reachable targets discovered from %s", target)
 	}
 
 	// Check if cancelled during crawl
@@ -141,9 +149,9 @@ func RunScan(target string, activeScan bool, crawl bool, depth int, jsonOutput b
 		}
 	}
 
-	for i, t := range targets {
+	for _, t := range targets {
 		wg.Add(1)
-		go func(idx int, urlStr string) {
+		go func(urlStr string) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -199,7 +207,7 @@ func RunScan(target string, activeScan bool, crawl bool, depth int, jsonOutput b
 					checkUniqueFindings[checkID][uniqueKey] = true
 				}
 			}
-		}(i, t)
+		}(t)
 	}
 	wg.Wait()
 
@@ -254,19 +262,99 @@ func RunScan(target string, activeScan bool, crawl bool, depth int, jsonOutput b
 }
 
 func isHTTPSReachable(target string) bool {
+	probe := target
+	if !strings.HasPrefix(probe, "http://") && !strings.HasPrefix(probe, "https://") {
+		probe = "https://" + probe
+	}
+	parsed, err := url.Parse(probe)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+
 	client := &http.Client{
-		Timeout: 5 * time.Second,
+		Timeout: 3 * time.Second,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		},
 	}
-	resp, err := client.Head("https://" + target)
-	if err != nil {
-		resp, err = client.Get("https://" + target)
+	httpsURL := &url.URL{
+		Scheme: "https",
+		Host:   parsed.Host,
+		Path:   "/",
 	}
+	req, err := http.NewRequest(http.MethodHead, httpsURL.String(), nil)
+	if err != nil {
+		return false
+	}
+	resp, err := client.Do(req)
 	if err == nil {
 		resp.Body.Close()
 		return true
 	}
 	return false
+}
+
+func normalizeTarget(rawTarget string) (string, error) {
+	target := strings.TrimSpace(rawTarget)
+	if target == "" {
+		return "", fmt.Errorf("target is empty")
+	}
+
+	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+		if isHTTPSReachable(target) {
+			target = "https://" + target
+		} else {
+			target = "http://" + target
+		}
+	}
+
+	parsed, err := url.Parse(target)
+	if err != nil {
+		return "", fmt.Errorf("invalid target URL: %w", err)
+	}
+	if parsed.Hostname() == "" {
+		return "", fmt.Errorf("invalid target URL: missing host")
+	}
+	return parsed.String(), nil
+}
+
+func validateTargetHost(target string) error {
+	parsed, err := url.Parse(target)
+	if err != nil {
+		return err
+	}
+
+	host := parsed.Hostname()
+	if host == "" {
+		return fmt.Errorf("missing host")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return fmt.Errorf("DNS lookup failed for %s: %w", host, err)
+	}
+	if len(ips) == 0 {
+		return fmt.Errorf("no IP address found for %s", host)
+	}
+
+	port := parsed.Port()
+	if port == "" {
+		if strings.EqualFold(parsed.Scheme, "https") {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer dialCancel()
+	conn, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", net.JoinHostPort(host, port))
+	if err != nil {
+		return fmt.Errorf("connection to %s failed: %w", net.JoinHostPort(host, port), err)
+	}
+	_ = conn.Close()
+	return nil
 }

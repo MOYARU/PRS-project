@@ -2,6 +2,7 @@ package web
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -113,6 +114,10 @@ func CheckWebContentExposure(ctx *ctxpkg.Context) ([]report.Finding, error) {
 
 func checkPathExposure(ctx *ctxpkg.Context, path string, msgID string, category checks.Category) []report.Finding {
 	var findings []report.Finding
+	lowerPath := strings.ToLower(path)
+	if lowerPath == "/robots.txt" || lowerPath == "/sitemap.xml" || lowerPath == "/.well-known/security.txt" {
+		return findings
+	}
 	targetURL := resolveRelativeURL(ctx.FinalURL, path)
 
 	req, err := http.NewRequest("GET", targetURL.String(), nil)
@@ -125,8 +130,10 @@ func checkPathExposure(ctx *ctxpkg.Context, path string, msgID string, category 
 		return findings
 	}
 	defer resp.Body.Close()
+	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 128*1024))
+	body := string(bodyBytes)
 
-	if resp.StatusCode == http.StatusOK {
+	if resp.StatusCode == http.StatusOK && isLikelyExposedContent(path, body) {
 		msg := msges.GetMessage(msgID)
 		findings = append(findings, report.Finding{
 			ID:                         strings.ReplaceAll(strings.ToUpper(path), "/", "_") + "_EXPOSED",
@@ -145,6 +152,27 @@ func checkPathExposure(ctx *ctxpkg.Context, path string, msgID string, category 
 func resolveRelativeURL(baseURL *url.URL, relativePath string) *url.URL {
 	newURL, _ := url.Parse(relativePath)
 	return baseURL.ResolveReference(newURL)
+}
+
+func isLikelyExposedContent(path, body string) bool {
+	lowerPath := strings.ToLower(path)
+	lowerBody := strings.ToLower(body)
+	switch {
+	case strings.HasSuffix(lowerPath, "/robots.txt"):
+		return strings.Contains(lowerBody, "user-agent:")
+	case strings.HasSuffix(lowerPath, "/sitemap.xml"):
+		return strings.Contains(lowerBody, "<urlset") || strings.Contains(lowerBody, "<sitemapindex")
+	case strings.HasSuffix(lowerPath, "/security.txt"):
+		return strings.Contains(lowerBody, "contact:")
+	case strings.Contains(lowerPath, ".git/head"):
+		return strings.HasPrefix(strings.TrimSpace(lowerBody), "ref:")
+	case strings.Contains(lowerPath, ".git/config"):
+		return strings.Contains(lowerBody, "[core]")
+	case strings.HasSuffix(lowerPath, "/.env"):
+		return strings.Contains(body, "=")
+	default:
+		return len(strings.TrimSpace(body)) > 0
+	}
 }
 
 func checkMixedContent(ctx *ctxpkg.Context, doc *html.Node) []report.Finding {
@@ -309,7 +337,7 @@ func checkInlineScripts(ctx *ctxpkg.Context, doc *html.Node) []report.Finding {
 					break
 				}
 			}
-			if isInline && strings.TrimSpace(n.FirstChild.Data) != "" {
+			if isInline && n.FirstChild != nil && strings.TrimSpace(n.FirstChild.Data) != "" {
 				if !hasStrictCSP {
 					msg := msges.GetMessage("INLINE_SCRIPT_DETECTED")
 					findings = append(findings, report.Finding{

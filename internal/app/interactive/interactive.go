@@ -2,6 +2,7 @@ package interactive
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,8 @@ import (
 	"github.com/spf13/cobra" // cobra import
 	"golang.org/x/term"
 )
+
+const maxRepeaterBodyBytes = 1 << 20 // 1 MiB
 
 // RunInteractiveMode starts the interactive mode of PRS.
 func RunInteractiveMode(cmdObj *cobra.Command) {
@@ -43,6 +46,7 @@ func RunInteractiveMode(cmdObj *cobra.Command) {
 	var cursorPos int
 	history := []string{}
 	historyIndex := 0
+	readBuf := make([]byte, 1024)
 
 Loop:
 	for {
@@ -74,15 +78,14 @@ Loop:
 		}
 
 		// Read byte
-		b := make([]byte, 1024)
-		n, err := os.Stdin.Read(b)
+		n, err := os.Stdin.Read(readBuf)
 		if err != nil {
 			break
 		}
 
 		// Handle arrow keys + Escape sequence
-		if n >= 3 && b[0] == 27 && b[1] == 91 {
-			switch b[2] {
+		if n >= 3 && readBuf[0] == 27 && readBuf[1] == 91 {
+			switch readBuf[2] {
 			case 65: // Up Arrow
 				if historyIndex > 0 {
 					historyIndex--
@@ -112,7 +115,7 @@ Loop:
 		}
 
 		// Handle other keys
-		inputRunes := []rune(string(b[:n]))
+		inputRunes := []rune(string(readBuf[:n]))
 		for _, char := range inputRunes {
 			switch char {
 			case 3: // Ctrl+C
@@ -170,13 +173,19 @@ func processCommand(input string) bool {
 		return true
 	}
 
+	if input == "clear" || input == "cls" {
+		fmt.Print("\033[H\033[2J")
+		return false
+	}
+
 	if input == "help" {
 		fmt.Printf("%s%s%s\n", ui.ColorWhite, msges.GetUIMessage("InteractiveHelp"), ui.ColorReset)
-		fmt.Printf("%s  scan <target_url> [--active] [--depth N] [--json] [--delay MS]%s\n", ui.ColorGray, ui.ColorReset)
+		fmt.Printf("%s  scan <target_url> [--active] [--respect-robots] [--depth N] [--json] [--delay MS]%s\n", ui.ColorGray, ui.ColorReset)
 		fmt.Printf("%s  prs <target_url> ...%s\n", ui.ColorGray, ui.ColorReset)
 		fmt.Printf("%s  repeater <METHOD> <url> [body]%s\n", ui.ColorGray, ui.ColorReset)
 		fmt.Printf("%s  fuzz <url_with_FUZZ> <wordlist_path>%s\n", ui.ColorGray, ui.ColorReset)
 		fmt.Printf("%s  help%s\n", ui.ColorGray, ui.ColorReset)
+		fmt.Printf("%s  clear / cls%s\n", ui.ColorGray, ui.ColorReset)
 		fmt.Printf("%s  exit / quit%s\n", ui.ColorGray, ui.ColorReset)
 		return false
 	}
@@ -197,7 +206,7 @@ func processCommand(input string) bool {
 		}
 
 		target := cmdArgs[0]
-		active, jsonOut, depth, delay, err := parseScanFlags(cmdArgs[1:])
+		active, jsonOut, respectRobots, depth, delay, err := parseScanFlags(cmdArgs[1:])
 		if err != nil {
 			fmt.Printf("%s%s%s\n", ui.ColorRed, err, ui.ColorReset)
 			return false
@@ -211,7 +220,7 @@ func processCommand(input string) bool {
 			return false
 		}
 
-		err = scan.RunScan(target, active, crawl, depth, jsonOut, htmlOut, delay)
+		err = scan.RunScan(target, active, crawl, respectRobots, depth, jsonOut, htmlOut, delay)
 		if err != nil {
 			fmt.Printf("%s%s%s\n", ui.ColorRed, msges.GetUIMessage("InteractiveScanFailed", err), ui.ColorReset)
 		}
@@ -226,9 +235,10 @@ func processCommand(input string) bool {
 }
 
 // flag parsing helper
-func parseScanFlags(args []string) (bool, bool, int, int, error) {
+func parseScanFlags(args []string) (bool, bool, bool, int, int, error) {
 	active := false
 	jsonOut := false
+	respectRobots := false
 	depth := 2
 	delay := 0
 
@@ -239,6 +249,8 @@ func parseScanFlags(args []string) (bool, bool, int, int, error) {
 			active = true
 		case "--json":
 			jsonOut = true
+		case "--respect-robots":
+			respectRobots = true
 		case "--depth":
 			if i+1 < len(args) {
 				if d, err := strconv.Atoi(args[i+1]); err == nil {
@@ -254,10 +266,10 @@ func parseScanFlags(args []string) (bool, bool, int, int, error) {
 				}
 			}
 		default:
-			return false, false, 0, 0, fmt.Errorf(msges.GetUIMessage("InteractiveErrorUnknownFlag", arg))
+			return false, false, false, 0, 0, errors.New(msges.GetUIMessage("InteractiveErrorUnknownFlag", arg))
 		}
 	}
-	return active, jsonOut, depth, delay, nil
+	return active, jsonOut, respectRobots, depth, delay, nil
 }
 
 func handleRepeater(args []string) {
@@ -300,7 +312,15 @@ func handleRepeater(args []string) {
 	}
 	fmt.Println()
 
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxRepeaterBodyBytes+1))
+	if err != nil {
+		fmt.Printf("%sError reading response body: %v%s\n", ui.ColorRed, err, ui.ColorReset)
+		return
+	}
+	if len(bodyBytes) > maxRepeaterBodyBytes {
+		bodyBytes = bodyBytes[:maxRepeaterBodyBytes]
+		fmt.Printf("%s[Notice] Response body truncated to %d bytes.%s\n", ui.ColorYellow, maxRepeaterBodyBytes, ui.ColorReset)
+	}
 	fmt.Println(string(bodyBytes))
 }
 
@@ -344,7 +364,7 @@ func handleFuzzer(args []string) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			url := strings.Replace(targetURL, "FUZZ", w, -1)
+			url := strings.ReplaceAll(targetURL, "FUZZ", w)
 			req, _ := http.NewRequest("GET", url, nil)
 			req.Header.Set("User-Agent", "PRS-Fuzzer/1.5.0")
 
@@ -367,6 +387,9 @@ func handleFuzzer(args []string) {
 
 			fmt.Printf("[%s%d%s] %s\n", color, resp.StatusCode, ui.ColorReset, url)
 		}(word)
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Printf("%sError reading wordlist: %v%s\n", ui.ColorRed, err, ui.ColorReset)
 	}
 	wg.Wait()
 	fmt.Printf("%sFuzzing completed.%s\n", ui.ColorGreen, ui.ColorReset)

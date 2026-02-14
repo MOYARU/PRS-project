@@ -65,14 +65,6 @@ var (
 		"javascript:alert('%s')//",
 	}
 
-	sstiPayloads = []string{
-		"{{7*7}}",
-		"${7*7}",
-		"<%= 7*7 %>",
-		"#{7*7}",
-		"*{7*7}",
-	}
-
 	booleanPayloads = []struct {
 		True  string
 		False string
@@ -86,6 +78,21 @@ var (
 		{"' AND 1::int=1--", "' AND 1::int=0--"},         // PostgreSQL
 	}
 )
+
+type sstiProbe struct {
+	Payload  string
+	Expected string
+}
+
+func getSSTIProbes() []sstiProbe {
+	return []sstiProbe{
+		{Payload: "{{1337*17}}", Expected: "22729"},
+		{Payload: "${1337*17}", Expected: "22729"},
+		{Payload: "<%= 1337*17 %>", Expected: "22729"},
+		{Payload: "#{1337*17}", Expected: "22729"},
+		{Payload: "*{1337*17}", Expected: "22729"},
+	}
+}
 
 // CheckSQLInjection attempts to detect SQL Injection vulnerabilities by injecting common SQL error triggers.
 func CheckSQLInjection(ctx *ctxpkg.Context) ([]report.Finding, error) {
@@ -108,7 +115,23 @@ func CheckSQLInjection(ctx *ctxpkg.Context) ([]report.Finding, error) {
 
 ParamLoop:
 	for param, values := range queryParams {
+		if len(values) == 0 {
+			continue
+		}
 		originalValue := values[0] // Test primarily the first value
+
+		baselineReq, err := http.NewRequest("GET", u.String(), nil)
+		if err != nil {
+			continue
+		}
+		baselineResp, err := ctx.HTTPClient.Do(baselineReq)
+		if err != nil {
+			continue
+		}
+		baselineBodyBytes, _ := engine.DecodeResponseBody(baselineResp)
+		baselineResp.Body.Close()
+		baselineBodyLower := strings.ToLower(string(baselineBodyBytes))
+		baselineStatus := baselineResp.StatusCode
 
 		// Test cases: Append payload AND Replace with payload
 		for _, payload := range sqlPayloads {
@@ -142,7 +165,7 @@ ParamLoop:
 				}
 
 				// Check for 500 Internal Server Error as a hint
-				if resp.StatusCode == http.StatusInternalServerError {
+				if resp.StatusCode == http.StatusInternalServerError && baselineStatus != http.StatusInternalServerError {
 					msg := msges.GetMessage("SQL_INJECTION_ERROR_BASED")
 					findings = append(findings, report.Finding{
 						ID:         "SQL_INJECTION_ERROR_BASED",
@@ -157,7 +180,7 @@ ParamLoop:
 				}
 
 				for _, pattern := range sqlErrorPatterns {
-					if strings.Contains(bodyStringLower, pattern) {
+					if strings.Contains(bodyStringLower, pattern) && !strings.Contains(baselineBodyLower, pattern) {
 						msg := msges.GetMessage("SQL_INJECTION_ERROR_BASED")
 						findings = append(findings, report.Finding{
 							ID:         "SQL_INJECTION_ERROR_BASED",
@@ -257,6 +280,9 @@ func CheckReflectedXSS(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	}
 
 	for param, values := range queryParams {
+		if len(values) == 0 {
+			continue
+		}
 		originalValue := values[0]
 
 		for _, tmpl := range xssPayloadTemplates {
@@ -358,6 +384,9 @@ func checkTimeBasedInjection(ctx *ctxpkg.Context, delaySeconds int, payloads []s
 	if len(queryParams) > 0 {
 	ParamLoop:
 		for param, values := range queryParams {
+			if len(values) == 0 {
+				continue
+			}
 			originalValue := values[0]
 
 			for _, payload := range payloads {
@@ -434,11 +463,15 @@ func CheckSSTI(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		return findings, nil
 	}
 
+	baselineBody := string(ctx.BodyBytes)
 	for param, values := range queryParams {
+		if len(values) == 0 {
+			continue
+		}
 		originalValue := values[0]
-		for _, payload := range sstiPayloads {
+		for _, probe := range getSSTIProbes() {
 			newParams := cloneParams(queryParams)
-			newParams.Set(param, originalValue+payload) // Append
+			newParams.Set(param, originalValue+probe.Payload) // Append
 			u.RawQuery = newParams.Encode()
 
 			req, err := http.NewRequest("GET", u.String(), nil)
@@ -454,7 +487,9 @@ func CheckSSTI(ctx *ctxpkg.Context) ([]report.Finding, error) {
 			resp.Body.Close() // Close immediately to prevent resource leak in loop
 			bodyString := string(bodyBytes)
 
-			if strings.Contains(bodyString, "49") && !strings.Contains(bodyString, "7*7") {
+			if strings.Contains(bodyString, probe.Expected) &&
+				!strings.Contains(bodyString, "1337*17") &&
+				!strings.Contains(baselineBody, probe.Expected) {
 				msg := msges.GetMessage("SSTI_DETECTED")
 				findings = append(findings, report.Finding{
 					ID:         "SSTI_DETECTED",
@@ -463,7 +498,7 @@ func CheckSSTI(ctx *ctxpkg.Context) ([]report.Finding, error) {
 					Confidence: report.ConfidenceHigh,
 					Title:      msg.Title,
 					Message:    fmt.Sprintf(msg.Message, param),
-					Evidence:   "The expression '7*7' was evaluated to '49' by the server.",
+					Evidence:   fmt.Sprintf("The expression payload was evaluated to '%s' by the server.", probe.Expected),
 					Fix:        msg.Fix,
 				})
 				break
@@ -571,12 +606,27 @@ func checkPostReflectedXSS(ctx *ctxpkg.Context) []report.Finding {
 func checkPostSSTI(ctx *ctxpkg.Context) []report.Finding {
 	var findings []report.Finding
 	forms := extractForms(ctx)
+	probes := getSSTIProbes()
+	var payloads []string
+	for _, p := range probes {
+		payloads = append(payloads, p.Payload)
+	}
 	for _, form := range forms {
 		// Strategy: Append only
-		findings = append(findings, fuzzForm(ctx, form, sstiPayloads,
+		findings = append(findings, fuzzForm(ctx, form, payloads,
 			func(orig, payload string) []string { return []string{orig + payload} },
 			func(resp *http.Response, bodyString, payload string, targetInput crawler.FormInput) []report.Finding {
-				if strings.Contains(bodyString, "49") && !strings.Contains(bodyString, "7*7") {
+				expected := ""
+				for _, p := range probes {
+					if p.Payload == payload {
+						expected = p.Expected
+						break
+					}
+				}
+				if expected == "" {
+					return nil
+				}
+				if strings.Contains(bodyString, expected) && !strings.Contains(bodyString, "1337*17") && !strings.Contains(string(ctx.BodyBytes), expected) {
 					msg := msges.GetMessage("SSTI_DETECTED")
 					return []report.Finding{{
 						ID:         "SSTI_DETECTED",
@@ -585,7 +635,7 @@ func checkPostSSTI(ctx *ctxpkg.Context) []report.Finding {
 						Confidence: report.ConfidenceHigh,
 						Title:      msg.Title + " (POST)",
 						Message:    fmt.Sprintf(msg.Message, targetInput.Name+" (POST)"),
-						Evidence:   "The expression '7*7' was evaluated to '49' by the server.",
+						Evidence:   fmt.Sprintf("The expression payload was evaluated to '%s' by the server.", expected),
 						Fix:        msg.Fix,
 					}}
 				}

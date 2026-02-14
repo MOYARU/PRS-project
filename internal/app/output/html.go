@@ -44,6 +44,7 @@ type HTMLReportData struct {
 	UIChartTitle         string
 	UIEvidence           string
 	UIManualVerification string
+	UINoVulns            string
 }
 
 // SaveHTML report generates and saves an HTML report to a file.
@@ -90,6 +91,7 @@ func SaveHTMLReport(target string, scannedURLs []string, findings []report.Findi
 		UIChartTitle:         msges.GetUIMessage("HTMLChartTitle"),
 		UIEvidence:           msges.GetUIMessage("ConsoleEvidenceLabel"),
 		UIManualVerification: msges.GetUIMessage("UIManualVerification"),
+		UINoVulns:            msges.GetUIMessage("ConsoleNoIssues"),
 	}
 
 	for _, f := range templateFindings {

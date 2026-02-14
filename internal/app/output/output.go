@@ -23,6 +23,11 @@ func PrintScanProgress(current, total int, checkName, target string) {
 	progressMu.Lock()
 	defer progressMu.Unlock()
 
+	if total <= 0 {
+		fmt.Printf("\r [------------------------------] 0%% | %s [0/0]: %s\033[K", checkName, target)
+		return
+	}
+
 	percentage := float64(current) / float64(total) * 100
 	// Truncate target URL to prevent line wrapping
 	if len(target) > 50 {

@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/xml"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -19,16 +22,46 @@ import (
 
 var jsURLRegex = regexp.MustCompile(`(?:"|')(((?:https?://|/)[^"'\s<>]+))(?:"|')`)
 
+const (
+	maxCrawlTargets      = 1000
+	maxResponseBodyBytes = 2 << 20 // 2 MiB
+	maxLinksPerPage      = 500
+)
+
+var staticAssetExt = map[string]struct{}{
+	".png":   {},
+	".jpg":   {},
+	".jpeg":  {},
+	".gif":   {},
+	".svg":   {},
+	".webp":  {},
+	".ico":   {},
+	".pdf":   {},
+	".zip":   {},
+	".rar":   {},
+	".7z":    {},
+	".mp3":   {},
+	".mp4":   {},
+	".avi":   {},
+	".mov":   {},
+	".woff":  {},
+	".woff2": {},
+	".ttf":   {},
+	".eot":   {},
+}
+
 type Crawler struct {
-	BaseURL  *url.URL
-	MaxDepth int
-	Visited  map[string]bool
-	Results  []string
-	Forms    []Form
-	Client   *http.Client
-	mu       sync.Mutex
-	sem      chan struct{}
-	wg       sync.WaitGroup // 고루틴
+	BaseURL        *url.URL
+	MaxDepth       int
+	RespectRobots  bool
+	Visited        map[string]bool
+	Queued         map[string]bool
+	VisitedSitemap map[string]bool
+	Results        []string
+	Client         *http.Client
+	mu             sync.Mutex
+	sem            chan struct{}
+	wg             sync.WaitGroup
 }
 
 type Form struct {
@@ -61,29 +94,38 @@ func New(target string, depth int, delay time.Duration) (*Crawler, error) {
 	}
 
 	return &Crawler{
-		BaseURL:  u,
-		MaxDepth: depth,
-		Visited:  make(map[string]bool),
-		Results:  []string{},
-		Forms:    []Form{},
-		Client:   client,
-		sem:      make(chan struct{}, 10), // 동시 요청 제한
+		BaseURL:        u,
+		MaxDepth:       depth,
+		RespectRobots:  false,
+		Visited:        make(map[string]bool),
+		Queued:         make(map[string]bool),
+		VisitedSitemap: make(map[string]bool),
+		Results:        []string{},
+		Client:         client,
+		sem:            make(chan struct{}, 10),
 	}, nil
+}
+
+func (c *Crawler) SetRespectRobots(enabled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.RespectRobots = enabled
 }
 
 func (c *Crawler) Start(ctx context.Context) []string {
 	ctx, cancel := ui.WaitForCancel(ctx)
 	defer cancel()
 
-	c.wg.Add(1)
-	go c.crawl(ctx, c.BaseURL.String(), 0)
+	c.scheduleCrawl(ctx, c.BaseURL.String(), 0)
 
-	// robots.txt 및 sitemap.xml 파싱 시작
 	c.wg.Add(1)
 	go c.processRobotsAndSitemap(ctx)
 
 	c.wg.Wait()
-	return c.Results
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	sort.Strings(c.Results)
+	return append([]string(nil), c.Results...)
 }
 
 func (c *Crawler) crawl(ctx context.Context, targetURL string, depth int) {
@@ -99,100 +141,194 @@ func (c *Crawler) crawl(ctx context.Context, targetURL string, depth int) {
 		return
 	}
 
-	// Visited Limit to prevent infinite crawling
 	c.mu.Lock()
-	if len(c.Visited) >= 1000 {
-		c.mu.Unlock()
-		return
-	}
-	c.mu.Unlock()
-
-	// Normalize URL (remove fragment)
-	u, err := url.Parse(targetURL)
-	if err != nil {
-		return
-	}
-	u.Fragment = ""
-	// Canonicalize: remove trailing slash
-	if u.Path != "/" && strings.HasSuffix(u.Path, "/") {
-		u.Path = strings.TrimSuffix(u.Path, "/")
-	}
-	targetURL = u.String()
-
-	c.mu.Lock()
-	if c.Visited[targetURL] {
-		c.mu.Unlock()
-		return
-	}
 	c.Visited[targetURL] = true
 	c.Results = append(c.Results, targetURL)
 	c.mu.Unlock()
 
 	select {
-	case c.sem <- struct{}{}: // 세마포어 획득
-		defer func() { <-c.sem }() // 함수 종료 시 반납
+	case c.sem <- struct{}{}:
+		defer func() { <-c.sem }()
 	case <-ctx.Done():
 		return
 	}
 
-	resp, err := c.Client.Get(targetURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	if err != nil {
+		return
+	}
+	resp, err := c.Client.Do(req)
 	if err != nil {
 		return
 	}
 	defer resp.Body.Close()
 
-	// 리다이렉트 등으로 인해 최종 URL이 변경되었을 수 있으므로, 상대 경로 해석을 위해 URL 업데이트
+	u, err := url.Parse(targetURL)
+	if err != nil {
+		return
+	}
 	if resp.Request != nil && resp.Request.URL != nil {
 		u = resp.Request.URL
 	}
+	if finalURL, ok := c.normalizeURL(u.String()); ok && finalURL != targetURL {
+		c.mu.Lock()
+		if c.Visited[finalURL] {
+			c.mu.Unlock()
+			return
+		}
+		c.Visited[finalURL] = true
+		c.Results = append(c.Results, finalURL)
+		c.mu.Unlock()
+	}
 
-	contentType := resp.Header.Get("Content-Type")
-	isHTML := strings.Contains(contentType, "text/html")
-	isJS := strings.Contains(contentType, "javascript") || strings.HasSuffix(u.Path, ".js")
+	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
+	isHTML := strings.Contains(contentType, "text/html") || strings.Contains(contentType, "application/xhtml+xml")
+	isJS := strings.Contains(contentType, "javascript") || strings.HasSuffix(strings.ToLower(u.Path), ".js")
 
 	if !isHTML && !isJS {
 		return
 	}
 
 	var links []string
-	var resolveBase *url.URL = u
+	resolveBase := u
 
 	if isHTML {
-		doc, err := html.Parse(resp.Body)
+		doc, err := html.Parse(io.LimitReader(resp.Body, maxResponseBodyBytes))
 		if err != nil {
 			return
 		}
 
-		var forms []Form
 		var pageBase *url.URL
-		links, forms, pageBase = c.extractData(doc)
+		links, pageBase = c.extractData(doc)
 
 		if pageBase != nil {
 			resolveBase = u.ResolveReference(pageBase)
 		}
-
-		c.mu.Lock()
-		c.Forms = append(c.Forms, forms...)
-		c.mu.Unlock()
-	} else if isJS {
-		bodyBytes, err := io.ReadAll(resp.Body)
-		if err == nil {
-			links = c.extractLinksFromJS(string(bodyBytes))
+	} else {
+		bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes))
+		if err != nil {
+			return
 		}
+		links = c.extractLinksFromJS(string(bodyBytes))
 	}
 
+	links = dedupeAndLimitLinks(links, maxLinksPerPage)
 	for _, link := range links {
 		absoluteURL := c.resolveURL(resolveBase, link)
-		if absoluteURL != "" && c.isSameDomain(absoluteURL) {
-			c.wg.Add(1)
-			go c.crawl(ctx, absoluteURL, depth+1)
-		}
+		c.scheduleCrawl(ctx, absoluteURL, depth+1)
 	}
 }
 
-func (c *Crawler) extractData(n *html.Node) ([]string, []Form, *url.URL) {
+func (c *Crawler) scheduleCrawl(ctx context.Context, targetURL string, depth int) {
+	if depth > c.MaxDepth {
+		return
+	}
+	if targetURL == "" {
+		return
+	}
+
+	normalized, ok := c.normalizeURL(targetURL)
+	if !ok || !c.isSameDomain(normalized) || shouldSkipByExtension(normalized) {
+		return
+	}
+
+	c.mu.Lock()
+	if len(c.Queued) >= maxCrawlTargets || c.Queued[normalized] || c.Visited[normalized] {
+		c.mu.Unlock()
+		return
+	}
+	c.Queued[normalized] = true
+	c.wg.Add(1)
+	c.mu.Unlock()
+
+	go c.crawl(ctx, normalized, depth)
+}
+
+func (c *Crawler) normalizeURL(raw string) (string, bool) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", false
+	}
+
+	if u.Scheme == "" {
+		u.Scheme = c.BaseURL.Scheme
+	}
+	u.Scheme = strings.ToLower(u.Scheme)
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", false
+	}
+	if u.Host == "" {
+		u.Host = c.BaseURL.Host
+	}
+
+	host := strings.ToLower(u.Hostname())
+	if host == "" {
+		return "", false
+	}
+
+	port := u.Port()
+	switch {
+	case u.Scheme == "http" && port == "80":
+		u.Host = host
+	case u.Scheme == "https" && port == "443":
+		u.Host = host
+	case port != "":
+		u.Host = net.JoinHostPort(host, port)
+	default:
+		u.Host = host
+	}
+
+	u.Fragment = ""
+	if u.Path == "" {
+		u.Path = "/"
+	}
+	if u.Path != "/" && strings.HasSuffix(u.Path, "/") {
+		u.Path = strings.TrimSuffix(u.Path, "/")
+	}
+	if u.RawQuery != "" {
+		parsed, err := url.ParseQuery(u.RawQuery)
+		if err == nil {
+			u.RawQuery = parsed.Encode()
+		}
+	}
+	return u.String(), true
+}
+
+func shouldSkipByExtension(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return true
+	}
+	ext := strings.ToLower(path.Ext(u.Path))
+	_, skip := staticAssetExt[ext]
+	return skip
+}
+
+func dedupeAndLimitLinks(links []string, limit int) []string {
+	if len(links) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(links))
+	out := make([]string, 0, len(links))
+	for _, link := range links {
+		link = strings.TrimSpace(link)
+		if link == "" {
+			continue
+		}
+		if _, exists := seen[link]; exists {
+			continue
+		}
+		seen[link] = struct{}{}
+		out = append(out, link)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func (c *Crawler) extractData(n *html.Node) ([]string, *url.URL) {
 	var links []string
-	var forms []Form
 	var base *url.URL
 
 	var f func(*html.Node)
@@ -200,7 +336,7 @@ func (c *Crawler) extractData(n *html.Node) ([]string, []Form, *url.URL) {
 		if n.Type == html.ElementNode {
 			switch n.Data {
 			case "base":
-				if base == nil { // 첫 번째 base 태그만 유효
+				if base == nil {
 					for _, a := range n.Attr {
 						if a.Key == "href" {
 							if parsedBase, err := url.Parse(a.Val); err == nil {
@@ -228,18 +364,11 @@ func (c *Crawler) extractData(n *html.Node) ([]string, []Form, *url.URL) {
 					}
 				}
 			case "form":
-				form := Form{Method: "GET"}
 				for _, a := range n.Attr {
 					if a.Key == "action" {
-						form.ActionURL = a.Val
 						links = append(links, a.Val)
 					}
-					if a.Key == "method" {
-						form.Method = strings.ToUpper(a.Val)
-					}
 				}
-				form.Inputs = ExtractInputs(n)
-				forms = append(forms, form)
 			case "meta":
 				var httpEquiv, content string
 				for _, a := range n.Attr {
@@ -265,13 +394,11 @@ func (c *Crawler) extractData(n *html.Node) ([]string, []Form, *url.URL) {
 				}
 			}
 
-			// Check for onclick navigation (improved heuristic)
 			for _, a := range n.Attr {
 				k := strings.ToLower(a.Key)
 				if k == "onclick" || k == "onmousedown" || k == "onmouseup" {
 					val := a.Val
 					if strings.Contains(val, "location") || strings.Contains(val, "open") || strings.Contains(val, "window") {
-						// Extract all potential URLs inside quotes
 						for _, quote := range []string{"'", "\""} {
 							parts := strings.Split(val, quote)
 							for i := 1; i < len(parts); i += 2 {
@@ -290,7 +417,7 @@ func (c *Crawler) extractData(n *html.Node) ([]string, []Form, *url.URL) {
 		}
 	}
 	f(n)
-	return links, forms, base
+	return links, base
 }
 
 func (c *Crawler) extractLinksFromJS(content string) []string {
@@ -357,7 +484,6 @@ func ExtractInputs(n *html.Node) []FormInput {
 					}
 				}
 			} else if n.Data == "select" {
-				// Handle select/option
 				name := ""
 				for _, a := range n.Attr {
 					if a.Key == "name" {
@@ -379,11 +505,28 @@ func ExtractInputs(n *html.Node) []FormInput {
 }
 
 func (c *Crawler) resolveURL(baseURL *url.URL, ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ""
+	}
+	refLower := strings.ToLower(ref)
+	if strings.HasPrefix(refLower, "#") ||
+		strings.HasPrefix(refLower, "javascript:") ||
+		strings.HasPrefix(refLower, "mailto:") ||
+		strings.HasPrefix(refLower, "tel:") ||
+		strings.HasPrefix(refLower, "data:") {
+		return ""
+	}
+
 	refURL, err := url.Parse(ref)
 	if err != nil {
 		return ""
 	}
-	return baseURL.ResolveReference(refURL).String()
+	normalized, ok := c.normalizeURL(baseURL.ResolveReference(refURL).String())
+	if !ok {
+		return ""
+	}
+	return normalized
 }
 
 func (c *Crawler) isSameDomain(link string) bool {
@@ -392,27 +535,23 @@ func (c *Crawler) isSameDomain(link string) bool {
 		return false
 	}
 
-	linkHost := strings.ToLower(u.Host)
-	baseHost := strings.ToLower(c.BaseURL.Host)
-
-	// 동일 도메인이거나 서브도메인인 경우 허용
+	linkHost := strings.ToLower(u.Hostname())
+	baseHost := strings.ToLower(c.BaseURL.Hostname())
 	return linkHost == baseHost || strings.HasSuffix(linkHost, "."+baseHost)
 }
 
 func (c *Crawler) processRobotsAndSitemap(ctx context.Context) {
 	defer c.wg.Done()
 
-	// robots.txt
 	robotsURL := c.BaseURL.ResolveReference(&url.URL{Path: "/robots.txt"})
 	c.parseRobotsTXT(ctx, robotsURL.String())
 
-	// sitemap.xml
 	sitemapURL := c.BaseURL.ResolveReference(&url.URL{Path: "/sitemap.xml"})
 	c.parseSitemapXML(ctx, sitemapURL.String())
 }
 
 func (c *Crawler) parseRobotsTXT(ctx context.Context, targetURL string) {
-	req, err := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
 		return
 	}
@@ -427,37 +566,63 @@ func (c *Crawler) parseRobotsTXT(ctx context.Context, targetURL string) {
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		line := strings.TrimSpace(scanner.Text())
-		// Disallow: /path or Allow: /path
-		if strings.HasPrefix(line, "Disallow:") || strings.HasPrefix(line, "Allow:") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		line = strings.SplitN(line, "#", 2)[0]
+		line = strings.TrimSpace(line)
+		lower := strings.ToLower(line)
+
+		if strings.HasPrefix(lower, "disallow:") || strings.HasPrefix(lower, "allow:") {
 			parts := strings.SplitN(line, ":", 2)
 			if len(parts) == 2 {
-				path := strings.TrimSpace(parts[1])
-				if path != "" && strings.HasPrefix(path, "/") {
-					absoluteURL := c.BaseURL.ResolveReference(&url.URL{Path: path}).String()
-					if c.isSameDomain(absoluteURL) {
-						c.wg.Add(1)
-						go c.crawl(ctx, absoluteURL, 0)
+				pathValue := strings.TrimSpace(parts[1])
+				if pathValue != "" && strings.HasPrefix(pathValue, "/") {
+					if c.RespectRobots && strings.HasPrefix(lower, "disallow:") {
+						continue
 					}
+					absoluteURL := c.BaseURL.ResolveReference(&url.URL{Path: pathValue}).String()
+					c.scheduleCrawl(ctx, absoluteURL, 0)
 				}
 			}
 		}
-		// Sitemap: http://example.com/sitemap.xml
-		if strings.HasPrefix(line, "Sitemap:") {
-			parts := strings.SplitN(line, ":", 2)
-			if len(parts) == 2 {
-				sitemapLoc := strings.TrimSpace(parts[1])
-				if sitemapLoc != "" {
-					c.parseSitemapXML(ctx, sitemapLoc)
-				}
+
+		if strings.HasPrefix(lower, "sitemap:") {
+			sitemapLoc := strings.TrimSpace(line[len("sitemap:"):])
+			if sitemapLoc != "" {
+				c.parseSitemapXML(ctx, sitemapLoc)
 			}
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		return
 	}
 }
 
 func (c *Crawler) parseSitemapXML(ctx context.Context, targetURL string) {
-	req, err := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
+	normalizedSitemapURL, ok := c.normalizeURL(targetURL)
+	if !ok {
+		return
+	}
+
+	c.mu.Lock()
+	if c.VisitedSitemap[normalizedSitemapURL] {
+		c.mu.Unlock()
+		return
+	}
+	c.VisitedSitemap[normalizedSitemapURL] = true
+	c.mu.Unlock()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, normalizedSitemapURL, nil)
 	if err != nil {
 		return
 	}
@@ -471,28 +636,37 @@ func (c *Crawler) parseSitemapXML(ctx context.Context, targetURL string) {
 		return
 	}
 
-	decoder := xml.NewDecoder(resp.Body)
+	decoder := xml.NewDecoder(io.LimitReader(resp.Body, maxResponseBodyBytes))
 	for {
 		t, _ := decoder.Token()
 		if t == nil {
 			break
 		}
+
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		switch se := t.(type) {
 		case xml.StartElement:
-			if se.Name.Local == "loc" {
-				var loc string
-				if err := decoder.DecodeElement(&loc, &se); err == nil {
-					loc = strings.TrimSpace(loc)
-					if loc != "" && c.isSameDomain(loc) {
-						if strings.HasSuffix(loc, ".xml") {
-							c.parseSitemapXML(ctx, loc)
-						} else {
-							c.wg.Add(1)
-							go c.crawl(ctx, loc, 0)
-						}
-					}
-				}
+			if !strings.EqualFold(se.Name.Local, "loc") {
+				continue
 			}
+			var loc string
+			if err := decoder.DecodeElement(&loc, &se); err != nil {
+				continue
+			}
+			loc = strings.TrimSpace(loc)
+			if loc == "" || !c.isSameDomain(loc) {
+				continue
+			}
+			if strings.HasSuffix(strings.ToLower(loc), ".xml") {
+				c.parseSitemapXML(ctx, loc)
+				continue
+			}
+			c.scheduleCrawl(ctx, loc, 0)
 		}
 	}
 }

@@ -62,7 +62,6 @@ func CheckSecurityHeaders(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	}
 
 	findings = append(findings, checkHSTS(ctx, headers)...)
-	findings = append(findings, checkCookieFlags(ctx.Response)...)
 	findings = append(findings, checkInfoHeaders(headers)...)
 
 	return findings, nil

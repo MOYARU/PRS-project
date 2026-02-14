@@ -40,8 +40,8 @@ func CheckMethodOverride(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	}
 	defer overridePostResp.Body.Close()
 
-	if normalPostResp.StatusCode != overridePostResp.StatusCode ||
-		(overridePostResp.StatusCode == http.StatusOK || overridePostResp.StatusCode == http.StatusNoContent) {
+	if normalPostResp.StatusCode != overridePostResp.StatusCode &&
+		(overridePostResp.StatusCode == http.StatusOK || overridePostResp.StatusCode == http.StatusNoContent || overridePostResp.StatusCode == http.StatusAccepted) {
 		msg := msges.GetMessage("METHOD_OVERRIDE_ALLOWED")
 		findings = append(findings, report.Finding{
 			ID:                         "METHOD_OVERRIDE_ALLOWED",

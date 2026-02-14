@@ -5,12 +5,17 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/MOYARU/PRS-project/internal/checks"
 	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context"
 	msges "github.com/MOYARU/PRS-project/internal/messages"
 	"github.com/MOYARU/PRS-project/internal/report"
+)
+
+var (
+	phpObjectPattern = regexp.MustCompile(`^[OCaidsbN]:\d+[:;{]`)
 )
 
 func CheckInsecureDeserialization(ctx *ctxpkg.Context) ([]report.Finding, error) {
@@ -74,7 +79,7 @@ func checkSignatures(value string) bool {
 	}
 
 	// PHP Serialization
-	if strings.HasPrefix(value, "O:") || strings.HasPrefix(value, "a:") {
+	if phpObjectPattern.MatchString(value) {
 		// Simple heuristic for PHP object or array
 		return true
 	}

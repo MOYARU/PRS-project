@@ -3,6 +3,7 @@ package injection
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/MOYARU/PRS-project/internal/checks"
@@ -67,6 +68,55 @@ func CheckXXE(ctx *ctxpkg.Context) ([]report.Finding, error) {
 			Fix:                        msg.Fix,
 			IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
 		})
+	}
+
+	// Check Forms
+	forms := extractForms(ctx)
+	for _, form := range forms {
+		if form.Method != "POST" {
+			continue
+		}
+
+		var targetURL string
+		if form.ActionURL == "" {
+			targetURL = ctx.FinalURL.String()
+		} else {
+			u, err := url.Parse(form.ActionURL)
+			if err == nil {
+				targetURL = ctx.FinalURL.ResolveReference(u).String()
+			} else {
+				continue
+			}
+		}
+
+		req, err := http.NewRequest("POST", targetURL, strings.NewReader(payload))
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Content-Type", "application/xml")
+
+		resp, err := ctx.HTTPClient.Do(req)
+		if err != nil {
+			continue
+		}
+
+		bodyBytes, _ := engine.DecodeResponseBody(resp)
+		resp.Body.Close()
+
+		if strings.Contains(string(bodyBytes), canary) {
+			msg := msges.GetMessage("XXE_DETECTED")
+			findings = append(findings, report.Finding{
+				ID:                         "XXE_DETECTED",
+				Category:                   string(checks.CategoryInputHandling),
+				Severity:                   report.SeverityHigh,
+				Confidence:                 report.ConfidenceHigh,
+				Title:                      msg.Title,
+				Message:                    fmt.Sprintf(msg.Message, canary),
+				Evidence:                   "Entity expansion detected in response.",
+				Fix:                        msg.Fix,
+				IsPotentiallyFalsePositive: msg.IsPotentiallyFalsePositive,
+			})
+		}
 	}
 
 	return findings, nil

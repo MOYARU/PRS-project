@@ -212,11 +212,10 @@ func checkCSRFTokenPresence(ctx *ctxpkg.Context) []report.Finding {
 		return findings
 	}
 
-	bodyBytes, err := engine.DecodeResponseBody(ctx.Response)
-	if err != nil {
+	if len(ctx.BodyBytes) == 0 {
 		return findings
 	}
-	bodyString := string(bodyBytes)
+	bodyString := string(ctx.BodyBytes)
 
 	if strings.Contains(strings.ToLower(bodyString), "<form") {
 		hasCSRFToken := strings.Contains(strings.ToLower(bodyString), "csrf_token") ||
@@ -263,13 +262,13 @@ func checkGraphQLIntrospection(ctx *ctxpkg.Context) []report.Finding {
 		if err != nil {
 			continue
 		}
-		defer resp.Body.Close()
+		bodyBytes, err := engine.DecodeResponseBody(resp)
+		resp.Body.Close()
+		if err != nil {
+			continue
+		}
 
 		if resp.StatusCode == http.StatusOK {
-			bodyBytes, err := engine.DecodeResponseBody(resp)
-			if err != nil {
-				continue
-			}
 			bodyString := string(bodyBytes)
 
 			if strings.Contains(bodyString, "__schema") && strings.Contains(bodyString, "queryType") && strings.Contains(bodyString, "fields") {
@@ -419,7 +418,7 @@ func IsErrorPage(body string, status int) bool {
 	}
 
 	lowerBody := strings.ToLower(body)
-	errorKeywords := []string{"not found", "404", "error", "exception", "failed", "unauthorized", "forbidden"}
+	errorKeywords := []string{"not found", "404", "exception", "unauthorized", "forbidden"}
 	for _, keyword := range errorKeywords {
 		if strings.Contains(lowerBody, keyword) {
 			return true

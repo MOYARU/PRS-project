@@ -9,23 +9,21 @@ import (
 	"time"
 
 	"github.com/MOYARU/PRS-project/internal/checks"
-	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context" // New import with alias
+	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context"
 	"github.com/MOYARU/PRS-project/internal/checks/registry"
 	"github.com/MOYARU/PRS-project/internal/engine"
 	"github.com/MOYARU/PRS-project/internal/report"
 )
 
 type Scanner struct {
-	Target  string
-	Mode    ctxpkg.ScanMode
-	Checks  []checks.Check
-	client  *http.Client
-	baseURL *http.Request
+	Target string
+	Mode   ctxpkg.ScanMode
+	Checks []checks.Check
+	client *http.Client
 }
 
 func New(target string, mode ctxpkg.ScanMode, delay time.Duration, client *http.Client) (*Scanner, error) {
-	req, err := http.NewRequest("GET", target, nil)
-	if err != nil {
+	if _, err := http.NewRequest("GET", target, nil); err != nil {
 		return nil, fmt.Errorf("invalid target URL: %w", err)
 	}
 
@@ -34,16 +32,21 @@ func New(target string, mode ctxpkg.ScanMode, delay time.Duration, client *http.
 	}
 
 	return &Scanner{
-		Target:  target,
-		Mode:    mode,
-		Checks:  registry.DefaultChecks(),
-		client:  client,
-		baseURL: req,
+		Target: target,
+		Mode:   mode,
+		Checks: registry.DefaultChecks(),
+		client: client,
 	}, nil
 }
 
+// fix: Run 메서드에서 체크 실행 시 context 취소를 제대로 처리하도록 수정
 func (s *Scanner) Run(ctx context.Context) (map[string][]report.Finding, error) {
-	resp, err := s.client.Do(s.baseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.Target, nil)
+	if err != nil {
+		return nil, fmt.Errorf("invalid target URL: %w", err)
+	}
+
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +57,7 @@ func (s *Scanner) Run(ctx context.Context) (map[string][]report.Finding, error) 
 	}
 	defer resp.Body.Close() // Close the original response body after reading
 
-	initialURL := s.baseURL.URL
+	initialURL := req.URL
 	finalURL := resp.Request.URL
 	redirected := initialURL.String() != finalURL.String()
 	redirectedToHTTPS := initialURL.Scheme == "http" && finalURL.Scheme == "https"
@@ -120,19 +123,6 @@ func (s *Scanner) Run(ctx context.Context) (map[string][]report.Finding, error) 
 		}(check)
 	}
 	wg.Wait()
-
-	// Flatten findings for local summary (deduplicated)
-	var allFindings []report.Finding
-	seen := make(map[string]bool)
-	for _, findings := range resultsByCheck {
-		for _, f := range findings {
-			key := f.ID + "|" + f.Message
-			if !seen[key] {
-				allFindings = append(allFindings, f)
-				seen[key] = true
-			}
-		}
-	}
 
 	return resultsByCheck, nil
 }

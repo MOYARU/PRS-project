@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/MOYARU/PRS-project/internal/checks"
@@ -14,7 +15,7 @@ import (
 
 var (
 	emailRegex = regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
-	ssnRegex   = regexp.MustCompile(`\d{3}-\d{2}-\d{4}`)
+	ssnRegex   = regexp.MustCompile(`\b\d{3}-\d{2}-\d{4}\b`)
 	// creditCardRegex = ... (omitted for brevity/safety, can be added)
 )
 
@@ -126,7 +127,7 @@ func CheckPacketAnomalies(ctx *ctxpkg.Context) ([]report.Finding, error) {
 			})
 		}
 	}
-	if ssnRegex.MatchString(bodyString) {
+	if ssnMatch := ssnRegex.FindString(bodyString); ssnMatch != "" && isLikelySSN(ssnMatch) {
 		findings = append(findings, report.Finding{
 			ID:         "PII_LEAKAGE_SSN",
 			Category:   string(checks.CategoryInformationLeakage),
@@ -134,12 +135,32 @@ func CheckPacketAnomalies(ctx *ctxpkg.Context) ([]report.Finding, error) {
 			Confidence: report.ConfidenceMedium,
 			Title:      "SSN Leaked",
 			Message:    "Potential Social Security Number found in response body.",
-			Evidence:   ssnRegex.FindString(bodyString),
+			Evidence:   ssnMatch,
 			Fix:        "Ensure PII is not leaked in responses.",
 		})
 	}
 
 	return findings, nil
+}
+
+func isLikelySSN(s string) bool {
+	parts := strings.Split(s, "-")
+	if len(parts) != 3 {
+		return false
+	}
+	area, err1 := strconv.Atoi(parts[0])
+	group, err2 := strconv.Atoi(parts[1])
+	serial, err3 := strconv.Atoi(parts[2])
+	if err1 != nil || err2 != nil || err3 != nil {
+		return false
+	}
+	if area == 0 || area == 666 || area >= 900 {
+		return false
+	}
+	if group == 0 || serial == 0 {
+		return false
+	}
+	return true
 }
 
 func extractCanonical(ctx *ctxpkg.Context) CanonicalPacket {

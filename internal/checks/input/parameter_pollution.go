@@ -28,6 +28,19 @@ func CheckParameterPollution(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		return findings, nil
 	}
 
+	originalReq, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return findings, nil
+	}
+	originalResp, err := ctx.HTTPClient.Do(originalReq)
+	if err != nil {
+		return findings, nil
+	}
+	originalBodyBytes, _ := engine.DecodeResponseBody(originalResp)
+	originalResp.Body.Close()
+	originalBody := string(originalBodyBytes)
+	originalStatus := originalResp.StatusCode
+
 	for param, values := range queryParams {
 		if len(values) == 0 {
 			continue
@@ -49,10 +62,12 @@ func CheckParameterPollution(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		if err != nil {
 			continue
 		}
-		defer resp.Body.Close()
-
 		bodyBytes, _ := engine.DecodeResponseBody(resp)
-		if strings.Contains(string(bodyBytes), "polluted_value") {
+		resp.Body.Close()
+		bodyString := string(bodyBytes)
+		if resp.StatusCode != originalStatus &&
+			strings.Contains(bodyString, "polluted_value") &&
+			!strings.Contains(originalBody, "polluted_value") {
 			msg := msges.GetMessage("PARAMETER_POLLUTION_DETECTED")
 			findings = append(findings, report.Finding{
 				ID:                         "PARAMETER_POLLUTION_DETECTED",

@@ -1,6 +1,8 @@
 package api
 
 import (
+	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/MOYARU/PRS-project/internal/checks"
@@ -11,6 +13,27 @@ import (
 
 func CheckRateLimitAbsence(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	var findings []report.Finding
+
+	if ctx.Response == nil || ctx.Response.Request == nil {
+		return findings, nil
+	}
+
+	path := ""
+	if reqURL, err := url.Parse(ctx.Response.Request.URL.String()); err == nil {
+		path = strings.ToLower(reqURL.Path)
+	}
+	contentType := strings.ToLower(ctx.Response.Header.Get("Content-Type"))
+	isLikelyAPI := strings.Contains(contentType, "json") ||
+		strings.HasPrefix(path, "/api") ||
+		strings.Contains(path, "/graphql")
+	if !isLikelyAPI {
+		return findings, nil
+	}
+
+	// If server already signals throttling, do not report missing headers.
+	if ctx.Response.StatusCode == http.StatusTooManyRequests {
+		return findings, nil
+	}
 
 	if ctx.Response.Header.Get("Retry-After") == "" {
 		msg := msges.GetMessage("RETRY_AFTER_HEADER_MISSING")

@@ -3,12 +3,12 @@ package http
 import (
 	"crypto/rand"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
 	"github.com/MOYARU/PRS-project/internal/checks"
 	ctxpkg "github.com/MOYARU/PRS-project/internal/checks/context"
+	"github.com/MOYARU/PRS-project/internal/engine"
 	msges "github.com/MOYARU/PRS-project/internal/messages"
 	"github.com/MOYARU/PRS-project/internal/report"
 )
@@ -49,7 +49,7 @@ func checkTRACEMethod(ctx *ctxpkg.Context) []report.Finding {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusOK {
-		bodyBytes, err := io.ReadAll(resp.Body)
+		bodyBytes, err := engine.DecodeResponseBody(resp)
 		if err != nil {
 			return findings
 		}

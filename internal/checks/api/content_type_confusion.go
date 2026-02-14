@@ -111,10 +111,13 @@ func checkJSONP(ctx *ctxpkg.Context) []report.Finding {
 		if err != nil {
 			continue
 		}
-		defer resp.Body.Close()
+		bodyBytes, err := engine.DecodeResponseBody(resp)
+		resp.Body.Close()
+		if err != nil {
+			continue
+		}
 
 		if resp.StatusCode == http.StatusOK {
-			bodyBytes, _ := engine.DecodeResponseBody(resp)
 			bodyString := string(bodyBytes)
 
 			// Check if the response is wrapped in the canary function
