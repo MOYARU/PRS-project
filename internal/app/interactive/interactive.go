@@ -17,6 +17,7 @@ import (
 	"github.com/MOYARU/prs/internal/app/scan"
 	"github.com/MOYARU/prs/internal/app/ui"
 	msges "github.com/MOYARU/prs/internal/messages"
+	appver "github.com/MOYARU/prs/internal/version"
 	"github.com/spf13/cobra" // cobra import
 	"golang.org/x/term"
 )
@@ -330,7 +331,7 @@ func handleRepeater(args []string) {
 		return
 	}
 
-	req.Header.Set("User-Agent", "PRS-Repeater/2.1.0")
+	req.Header.Set("User-Agent", appver.RepeaterUserAgent())
 	if method == "POST" || method == "PUT" {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
@@ -405,7 +406,7 @@ func handleFuzzer(args []string) {
 
 			url := strings.ReplaceAll(targetURL, "FUZZ", w)
 			req, _ := http.NewRequest("GET", url, nil)
-			req.Header.Set("User-Agent", "PRS-Fuzzer/2.1.0")
+			req.Header.Set("User-Agent", appver.FuzzerUserAgent())
 
 			resp, err := client.Do(req)
 			if err != nil {

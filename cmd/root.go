@@ -11,11 +11,12 @@ import (
 	"github.com/MOYARU/prs/internal/app/interactive"
 	"github.com/MOYARU/prs/internal/app/scan"
 	"github.com/MOYARU/prs/internal/app/ui"
+	appver "github.com/MOYARU/prs/internal/version"
 	"github.com/spf13/cobra"
 )
 
 var (
-	version = "2.1.0"
+	version = appver.Value
 
 	activeScan    bool
 	jsonOutput    bool
@@ -50,6 +51,8 @@ func Execute() {
 	}
 }
 func init() {
+	rootCmd.Version = version
+
 	rootCmd.Flags().BoolVar(&activeScan, "active", false, "Enable active scan (disabled by default)")
 	rootCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output result as JSON")
 	rootCmd.Flags().BoolVar(&htmlOutput, "html", false, "Output result as HTML")

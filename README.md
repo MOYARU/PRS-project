@@ -1,4 +1,4 @@
-﻿# PRS v2.1.0
+# PRS v2.1.1
   <p>
     <a href="https://github.com/MOYARU/PRS-project/releases">
       <img src="https://img.shields.io/github/v/release/MOYARU/PRS-project?color=5865F2" alt="Release">
@@ -164,4 +164,5 @@ Do not scan unauthorized targets.
 ## License
 
 MIT License
+
 

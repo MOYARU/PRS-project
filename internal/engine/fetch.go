@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	appver "github.com/MOYARU/prs/internal/version"
 )
 
 type FetchResult struct {
@@ -88,7 +90,7 @@ func fetchOnce(target string, allowRedirect bool, tlsConfig *tls.Config) (*http.
 		return nil, err
 	}
 
-	req.Header.Set("User-Agent", "PRS/2.1.0 (defensive security scanner)")
+	req.Header.Set("User-Agent", appver.ScannerUserAgent())
 
 	return client.Do(req)
 }
