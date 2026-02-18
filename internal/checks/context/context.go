@@ -1,6 +1,7 @@
 package context
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 )
@@ -14,6 +15,7 @@ const (
 
 type Context struct {
 	Target            string
+	RequestContext    context.Context
 	Mode              ScanMode
 	InitialURL        *url.URL
 	FinalURL          *url.URL

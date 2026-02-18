@@ -257,7 +257,7 @@ func processCommand(input string) bool {
 			return false
 		}
 
-		err = scan.RunScan(target, active, crawl, respectRobots, depth, jsonOut, htmlOut, delay)
+		err = scan.RunScan(target, active, crawl, respectRobots, depth, jsonOut, htmlOut, delay, true)
 		if err != nil {
 			fmt.Printf("%s%s%s\n", ui.ColorRed, msges.GetUIMessage("InteractiveScanFailed", err), ui.ColorReset)
 		}
@@ -277,7 +277,7 @@ func processCommand(input string) bool {
 func parseScanFlags(args []string) (bool, bool, bool, bool, int, int, error) {
 	active := false
 	jsonOut := false
-	crawl := false
+	crawl := true
 	respectRobots := false
 	depth := 2
 	delay := 0
@@ -335,7 +335,7 @@ func handleRepeater(args []string) {
 		return
 	}
 
-	req.Header.Set("User-Agent", "PRS-Repeater/2.0.0")
+	req.Header.Set("User-Agent", "PRS-Repeater/2.1.0")
 	if method == "POST" || method == "PUT" {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
@@ -410,7 +410,7 @@ func handleFuzzer(args []string) {
 
 			url := strings.ReplaceAll(targetURL, "FUZZ", w)
 			req, _ := http.NewRequest("GET", url, nil)
-			req.Header.Set("User-Agent", "PRS-Fuzzer/2.0.0")
+			req.Header.Set("User-Agent", "PRS-Fuzzer/2.1.0")
 
 			resp, err := client.Do(req)
 			if err != nil {

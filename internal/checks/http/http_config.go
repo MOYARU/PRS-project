@@ -36,7 +36,7 @@ func checkTRACEMethod(ctx *ctxpkg.Context) []report.Finding {
 		return findings
 	}
 
-	req, err := http.NewRequest("TRACE", ctx.FinalURL.String(), nil)
+	req, err := ctxpkg.NewRequest(ctx, "TRACE", ctx.FinalURL.String(), nil)
 	if err != nil {
 		return findings
 	}
@@ -75,7 +75,7 @@ func checkOPTIONSMethod(ctx *ctxpkg.Context) []report.Finding {
 	var findings []report.Finding
 
 	// Make an OPTIONS request
-	req, err := http.NewRequest("OPTIONS", ctx.FinalURL.String(), nil)
+	req, err := ctxpkg.NewRequest(ctx, "OPTIONS", ctx.FinalURL.String(), nil)
 	if err != nil {
 		return findings
 	}
@@ -114,12 +114,12 @@ func checkPUTDELETEMethods(ctx *ctxpkg.Context) []report.Finding {
 
 	// Ensure cleanup of the test file
 	defer func() {
-		cleanupReq, _ := http.NewRequest("DELETE", testURL, nil)
+		cleanupReq, _ := ctxpkg.NewRequest(ctx, "DELETE", testURL, nil)
 		ctx.HTTPClient.Do(cleanupReq)
 	}()
 
 	// Test PUT
-	putReq, err := http.NewRequest("PUT", testURL, strings.NewReader("test_content"))
+	putReq, err := ctxpkg.NewRequest(ctx, "PUT", testURL, strings.NewReader("test_content"))
 	if err != nil {
 		return findings
 	}
@@ -141,7 +141,7 @@ func checkPUTDELETEMethods(ctx *ctxpkg.Context) []report.Finding {
 	}
 
 	// Test DELETE
-	deleteReq, err := http.NewRequest("DELETE", testURL, nil)
+	deleteReq, err := ctxpkg.NewRequest(ctx, "DELETE", testURL, nil)
 	if err != nil {
 		return findings
 	}

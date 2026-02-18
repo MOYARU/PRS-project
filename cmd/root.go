@@ -11,12 +11,11 @@ import (
 	"github.com/MOYARU/prs/internal/app/interactive"
 	"github.com/MOYARU/prs/internal/app/scan"
 	"github.com/MOYARU/prs/internal/app/ui"
-	msges "github.com/MOYARU/prs/internal/messages"
 	"github.com/spf13/cobra"
 )
 
 var (
-	version = "2.0.0"
+	version = "2.1.0"
 
 	activeScan    bool
 	jsonOutput    bool
@@ -36,15 +35,7 @@ var rootCmd = &cobra.Command{
 			interactive.RunInteractiveMode(cmd)
 		} else {
 			target := args[0]
-
-			// Ask for HTML report interactively
-			var err error
-			htmlOutput, err = ui.Confirm(msges.GetUIMessage("AskSaveHTML"))
-			if err != nil {
-				return
-			}
-
-			err = scan.RunScan(target, activeScan, crawl, respectRobots, depth, jsonOutput, htmlOutput, delay)
+			err := scan.RunScan(target, activeScan, crawl, respectRobots, depth, jsonOutput, htmlOutput, delay, false)
 			if err != nil {
 				fmt.Printf("%sScan failed: %v%s\n", ui.ColorRed, err, ui.ColorReset)
 				os.Exit(1)
@@ -62,7 +53,8 @@ func Execute() {
 func init() {
 	rootCmd.Flags().BoolVar(&activeScan, "active", false, "Enable active scan (disabled by default)")
 	rootCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output result as JSON")
-	rootCmd.Flags().BoolVar(&crawl, "crawl", false, "Enable crawler (disabled by default; scans only target URL unless set)")
+	rootCmd.Flags().BoolVar(&htmlOutput, "html", false, "Output result as HTML")
+	rootCmd.Flags().BoolVar(&crawl, "crawl", true, "Enable crawler (enabled by default)")
 	rootCmd.Flags().BoolVar(&respectRobots, "respect-robots", false, "Respect robots.txt disallow rules during crawling")
 	rootCmd.Flags().IntVar(&depth, "depth", 2, "Crawling depth (default: 2)")
 	rootCmd.Flags().IntVar(&delay, "delay", 0, "Delay between requests in milliseconds (e.g., 500)")
@@ -83,10 +75,11 @@ Example:
 
 Flags:
   --active             Enable active scan (disabled by default)
-  --crawl              Enable crawler (disabled by default)
+  --crawl              Enable crawler (enabled by default)
   --respect-robots     Respect robots.txt disallow rules during crawling
   --depth              Crawling depth (default: 2)
   --json               Output result as JSON
+  --html               Output result as HTML
   --delay              Delay between requests in milliseconds
 
 This tool is intended for ethical hacking and security testing on assets you own or have explicit permission to test.

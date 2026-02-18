@@ -2,7 +2,6 @@ package input
 
 import (
 	"fmt"
-	"net/http"
 	"net/url"
 	"strings"
 
@@ -28,7 +27,7 @@ func CheckParameterPollution(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		return findings, nil
 	}
 
-	originalReq, err := http.NewRequest("GET", u.String(), nil)
+	originalReq, err := ctxpkg.NewRequest(ctx, "GET", u.String(), nil)
 	if err != nil {
 		return findings, nil
 	}
@@ -53,7 +52,7 @@ func CheckParameterPollution(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		newParams.Add(param, "polluted_value")
 
 		u.RawQuery = newParams.Encode()
-		req, err := http.NewRequest("GET", u.String(), nil)
+		req, err := ctxpkg.NewRequest(ctx, "GET", u.String(), nil)
 		if err != nil {
 			continue
 		}

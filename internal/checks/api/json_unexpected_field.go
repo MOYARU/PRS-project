@@ -39,7 +39,7 @@ func CheckJSONUnexpectedField(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		return findings, fmt.Errorf("failed to marshal modified JSON: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", ctx.FinalURL.String(), bytes.NewReader(modifiedJSON))
+	req, err := ctxpkg.NewRequest(ctx, "POST", ctx.FinalURL.String(), bytes.NewReader(modifiedJSON))
 	if err != nil {
 		return findings, err
 	}

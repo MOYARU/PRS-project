@@ -2,7 +2,6 @@ package injection
 
 import (
 	"fmt"
-	"net/http"
 	"net/url"
 	"strings"
 
@@ -34,7 +33,7 @@ func CheckXXE(ctx *ctxpkg.Context) ([]report.Finding, error) {
 </root>`, canary)
 
 	// Target the URL with a POST request containing XML
-	req, err := http.NewRequest("POST", ctx.FinalURL.String(), strings.NewReader(payload))
+	req, err := ctxpkg.NewRequest(ctx, "POST", ctx.FinalURL.String(), strings.NewReader(payload))
 	if err != nil {
 		return findings, err
 	}
@@ -89,7 +88,7 @@ func CheckXXE(ctx *ctxpkg.Context) ([]report.Finding, error) {
 			}
 		}
 
-		req, err := http.NewRequest("POST", targetURL, strings.NewReader(payload))
+		req, err := ctxpkg.NewRequest(ctx, "POST", targetURL, strings.NewReader(payload))
 		if err != nil {
 			continue
 		}

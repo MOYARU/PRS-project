@@ -128,7 +128,7 @@ ParamLoop:
 		}
 		originalValue := values[0] // Test primarily the first value
 
-		baselineReq, err := http.NewRequest("GET", u.String(), nil)
+		baselineReq, err := ctxpkg.NewRequest(ctx, "GET", u.String(), nil)
 		if err != nil {
 			continue
 		}
@@ -152,7 +152,7 @@ ParamLoop:
 				newParams.Set(param, testValue)
 				u.RawQuery = newParams.Encode()
 
-				req, err := http.NewRequest("GET", u.String(), nil)
+				req, err := ctxpkg.NewRequest(ctx, "GET", u.String(), nil)
 				if err != nil {
 					continue
 				}
@@ -210,7 +210,7 @@ ParamLoop:
 			newParamsTrue := cloneParams(queryParams)
 			newParamsTrue.Set(param, originalValue+bp.True)
 			u.RawQuery = newParamsTrue.Encode()
-			reqTrue, err := http.NewRequest("GET", u.String(), nil)
+			reqTrue, err := ctxpkg.NewRequest(ctx, "GET", u.String(), nil)
 			if err != nil {
 				continue
 			}
@@ -224,7 +224,7 @@ ParamLoop:
 			newParamsFalse := cloneParams(queryParams)
 			newParamsFalse.Set(param, originalValue+bp.False)
 			u.RawQuery = newParamsFalse.Encode()
-			reqFalse, err := http.NewRequest("GET", u.String(), nil)
+			reqFalse, err := ctxpkg.NewRequest(ctx, "GET", u.String(), nil)
 			if err != nil {
 				continue
 			}
@@ -302,7 +302,7 @@ func CheckReflectedXSS(ctx *ctxpkg.Context) ([]report.Finding, error) {
 				newParams.Set(param, val)
 				u.RawQuery = newParams.Encode()
 
-				req, err := http.NewRequest("GET", u.String(), nil)
+				req, err := ctxpkg.NewRequest(ctx, "GET", u.String(), nil)
 				if err != nil {
 					continue
 				}
@@ -399,7 +399,7 @@ func checkTimeBasedInjection(ctx *ctxpkg.Context, delaySeconds int, payloads []s
 				newParams.Set(param, originalValue+payload)
 				u.RawQuery = newParams.Encode()
 
-				req, err := http.NewRequest("GET", u.String(), nil)
+				req, err := ctxpkg.NewRequest(ctx, "GET", u.String(), nil)
 				if err != nil {
 					continue
 				}
@@ -415,7 +415,7 @@ func checkTimeBasedInjection(ctx *ctxpkg.Context, delaySeconds int, payloads []s
 
 				if duration.Seconds() >= float64(delaySeconds) {
 					// Verification: Retest to confirm it's not a network jitter
-					reqVerify, errVerify := http.NewRequest("GET", u.String(), nil)
+					reqVerify, errVerify := ctxpkg.NewRequest(ctx, "GET", u.String(), nil)
 					if errVerify == nil {
 						startVerify := time.Now()
 						respVerify, errVerify := doRequest(ctx.HTTPClient, reqVerify)
@@ -479,7 +479,7 @@ func CheckSSTI(ctx *ctxpkg.Context) ([]report.Finding, error) {
 			newParams.Set(param, originalValue+probe.Payload) // Append
 			u.RawQuery = newParams.Encode()
 
-			req, err := http.NewRequest("GET", u.String(), nil)
+			req, err := ctxpkg.NewRequest(ctx, "GET", u.String(), nil)
 			if err != nil {
 				continue
 			}
@@ -688,7 +688,7 @@ func checkPostBooleanSQLInjection(ctx *ctxpkg.Context) []report.Finding {
 							formValues.Set(input.Name, input.Value)
 						}
 					}
-					req, err := http.NewRequest("POST", targetURL, strings.NewReader(formValues.Encode()))
+					req, err := ctxpkg.NewRequest(ctx, "POST", targetURL, strings.NewReader(formValues.Encode()))
 					if err != nil {
 						return nil, nil, err
 					}
@@ -808,7 +808,7 @@ func fuzzForm(ctx *ctxpkg.Context, form crawler.Form, payloads []string,
 					}
 				}
 
-				req, err := http.NewRequest("POST", targetURL, strings.NewReader(formValues.Encode()))
+				req, err := ctxpkg.NewRequest(ctx, "POST", targetURL, strings.NewReader(formValues.Encode()))
 				if err != nil {
 					continue
 				}
@@ -892,7 +892,7 @@ func testFormTimeBasedInjection(ctx *ctxpkg.Context, form crawler.Form, delaySec
 				}
 			}
 
-			req, err := http.NewRequest("POST", targetURL, strings.NewReader(formValues.Encode()))
+			req, err := ctxpkg.NewRequest(ctx, "POST", targetURL, strings.NewReader(formValues.Encode()))
 			if err != nil {
 				continue
 			}
@@ -909,7 +909,7 @@ func testFormTimeBasedInjection(ctx *ctxpkg.Context, form crawler.Form, delaySec
 
 			if duration.Seconds() >= float64(delaySeconds) {
 				// Verification: Retest to confirm
-				reqVerify, errVerify := http.NewRequest("POST", targetURL, strings.NewReader(formValues.Encode()))
+				reqVerify, errVerify := ctxpkg.NewRequest(ctx, "POST", targetURL, strings.NewReader(formValues.Encode()))
 				if errVerify == nil {
 					reqVerify.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 					startVerify := time.Now()
@@ -963,7 +963,7 @@ func handlePostRedirect(ctx *ctxpkg.Context, resp *http.Response) (*http.Respons
 		}
 		resp.Body.Close()
 
-		req2, err := http.NewRequest("GET", loc.String(), nil)
+		req2, err := ctxpkg.NewRequest(ctx, "GET", loc.String(), nil)
 		if err != nil {
 			return nil, err
 		}

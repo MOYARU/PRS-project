@@ -24,7 +24,7 @@ import (
 	"golang.org/x/net/publicsuffix"
 )
 
-func RunScan(target string, activeScan bool, crawl bool, respectRobots bool, depth int, jsonOutput bool, htmlOutput bool, delay int) error {
+func RunScan(target string, activeScan bool, crawl bool, respectRobots bool, depth int, jsonOutput bool, htmlOutput bool, delay int, allowPrompts bool) error {
 	normalizedTarget, err := normalizeTarget(target)
 	if err != nil {
 		return err
@@ -54,7 +54,7 @@ func RunScan(target string, activeScan bool, crawl bool, respectRobots bool, dep
 	}()
 
 	// Active scan safety check
-	if activeScan {
+	if activeScan && allowPrompts {
 		fmt.Printf("\n%s%s%s\n", ui.ColorRed, msges.GetUIMessage("ActiveScanWarning"), ui.ColorReset)
 		fmt.Printf("%s%s%s\n", ui.ColorYellow, msges.GetUIMessage("ActiveScanPermission"), ui.ColorReset)
 
@@ -177,7 +177,7 @@ func RunScan(target string, activeScan bool, crawl bool, respectRobots bool, dep
 				mu.Unlock()
 				return
 			}
-			resultsByCheck, err := scn.Run(ctx)
+			resultsByCheck, checkErrors, err := scn.Run(ctx)
 			if err != nil {
 				mu.Lock()
 				scanErrors = append(scanErrors, msges.GetUIMessage("ScanFailed", urlStr, err))
@@ -218,6 +218,11 @@ func RunScan(target string, activeScan bool, crawl bool, respectRobots bool, dep
 					uniqueKey := f.ID + "|" + f.Message
 					checkUniqueFindings[checkID][uniqueKey] = true
 				}
+			}
+
+			for checkID, checkErr := range checkErrors {
+				checksRan[checkID] = true
+				scanErrors = append(scanErrors, fmt.Sprintf("check '%s' failed on %s: %v", checkID, urlStr, checkErr))
 			}
 		}(t)
 	}

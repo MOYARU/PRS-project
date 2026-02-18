@@ -21,7 +21,7 @@ func CheckContentTypeConfusion(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	}
 
 	if strings.Contains(ctx.Response.Header.Get("Content-Type"), "application/json") {
-		req, err := http.NewRequest("POST", ctx.FinalURL.String(), strings.NewReader(`{"test":"value"}`))
+		req, err := ctxpkg.NewRequest(ctx, "POST", ctx.FinalURL.String(), strings.NewReader(`{"test":"value"}`))
 		if err != nil {
 			return findings, err
 		}
@@ -51,7 +51,7 @@ func CheckContentTypeConfusion(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	}
 
 	// Check 2: Accept header ignored
-	req, err := http.NewRequest("GET", ctx.FinalURL.String(), nil)
+	req, err := ctxpkg.NewRequest(ctx, "GET", ctx.FinalURL.String(), nil)
 	if err != nil {
 		return findings, err
 	}
@@ -102,7 +102,7 @@ func checkJSONP(ctx *ctxpkg.Context) []report.Finding {
 		q.Set(paramName, canary)
 		u.RawQuery = q.Encode()
 
-		req, err := http.NewRequest("GET", u.String(), nil)
+		req, err := ctxpkg.NewRequest(ctx, "GET", u.String(), nil)
 		if err != nil {
 			continue
 		}

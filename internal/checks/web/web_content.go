@@ -118,7 +118,7 @@ func checkPathExposure(ctx *ctxpkg.Context, path string, msgID string, category 
 	}
 	targetURL := resolveRelativeURL(ctx.FinalURL, path)
 
-	req, err := http.NewRequest("GET", targetURL.String(), nil)
+	req, err := ctxpkg.NewRequest(ctx, "GET", targetURL.String(), nil)
 	if err != nil {
 		return findings
 	}

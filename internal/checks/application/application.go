@@ -3,6 +3,7 @@ package application
 import (
 	"crypto/rand"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/url"
@@ -57,7 +58,7 @@ func checkInputReflection(ctx *ctxpkg.Context) []report.Finding {
 
 	testURL := parsedURL.String()
 
-	req, err := http.NewRequest("GET", testURL, nil)
+	req, err := newScanRequest(ctx, http.MethodGet, testURL, nil)
 	if err != nil {
 		return findings
 	}
@@ -156,7 +157,7 @@ func probeIDOR(ctx *ctxpkg.Context, originalURL, testURL, description string, is
 	var findings []report.Finding
 
 	// Fetch the original URL to compare response size/content
-	reqOrig, err := http.NewRequest("GET", originalURL, nil)
+	reqOrig, err := newScanRequest(ctx, http.MethodGet, originalURL, nil)
 	if err != nil {
 		return findings
 	}
@@ -168,7 +169,7 @@ func probeIDOR(ctx *ctxpkg.Context, originalURL, testURL, description string, is
 	originalBody, _ := engine.DecodeResponseBody(originalResp)
 
 	// Fetch the test URL
-	reqTest, err := http.NewRequest("GET", testURL, nil)
+	reqTest, err := newScanRequest(ctx, http.MethodGet, testURL, nil)
 	if err != nil {
 		return findings
 	}
@@ -272,7 +273,7 @@ func checkGraphQLIntrospection(ctx *ctxpkg.Context) []report.Finding {
 	for _, path := range graphqlPaths {
 		targetURL := ctx.FinalURL.Scheme + "://" + ctx.FinalURL.Host + path
 
-		req, err := http.NewRequest("POST", targetURL, strings.NewReader(introspectionQuery))
+		req, err := newScanRequest(ctx, http.MethodPost, targetURL, strings.NewReader(introspectionQuery))
 		if err != nil {
 			continue
 		}
@@ -333,7 +334,7 @@ func checkOpenRedirect(ctx *ctxpkg.Context) []report.Finding {
 			newParams.Set(param, payload)
 			u.RawQuery = newParams.Encode()
 
-			req, err := http.NewRequest("GET", u.String(), nil)
+			req, err := newScanRequest(ctx, http.MethodGet, u.String(), nil)
 			if err != nil {
 				continue
 			}
@@ -343,7 +344,6 @@ func checkOpenRedirect(ctx *ctxpkg.Context) []report.Finding {
 			if err != nil {
 				continue
 			}
-			defer resp.Body.Close()
 
 			if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 				loc := resp.Header.Get("Location")
@@ -359,9 +359,17 @@ func checkOpenRedirect(ctx *ctxpkg.Context) []report.Finding {
 					})
 				}
 			}
+			resp.Body.Close()
 		}
 	}
 	return findings
+}
+
+func newScanRequest(scanCtx *ctxpkg.Context, method, target string, body io.Reader) (*http.Request, error) {
+	if scanCtx != nil && scanCtx.RequestContext != nil {
+		return http.NewRequestWithContext(scanCtx.RequestContext, method, target, body)
+	}
+	return http.NewRequest(method, target, body)
 }
 func ExtractTextFromHTML(body []byte) string {
 	doc, err := html.Parse(strings.NewReader(string(body)))

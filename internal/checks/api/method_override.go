@@ -18,7 +18,7 @@ func CheckMethodOverride(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		return findings, nil
 	}
 
-	normalPostReq, err := http.NewRequest("POST", ctx.FinalURL.String(), strings.NewReader(""))
+	normalPostReq, err := ctxpkg.NewRequest(ctx, "POST", ctx.FinalURL.String(), strings.NewReader(""))
 	if err != nil {
 		return findings, err
 	}
@@ -29,7 +29,7 @@ func CheckMethodOverride(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	defer normalPostResp.Body.Close()
 
 	overrideMethod := "DELETE"
-	overridePostReq, err := http.NewRequest("POST", ctx.FinalURL.String(), strings.NewReader(""))
+	overridePostReq, err := ctxpkg.NewRequest(ctx, "POST", ctx.FinalURL.String(), strings.NewReader(""))
 	if err != nil {
 		return findings, err
 	}

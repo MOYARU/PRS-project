@@ -2,7 +2,6 @@ package network
 
 import (
 	"fmt"
-	"net/http"
 
 	"github.com/MOYARU/prs/internal/checks"
 	ctxpkg "github.com/MOYARU/prs/internal/checks/context"
@@ -32,7 +31,7 @@ func CheckCORSConfiguration(ctx *ctxpkg.Context) ([]report.Finding, error) {
 
 	if ctx.Mode == ctxpkg.Active {
 		testOrigin := "https://malicious.com"
-		req, err := http.NewRequest("GET", ctx.FinalURL.String(), nil)
+		req, err := ctxpkg.NewRequest(ctx, "GET", ctx.FinalURL.String(), nil)
 		if err != nil {
 			return findings, err
 		}

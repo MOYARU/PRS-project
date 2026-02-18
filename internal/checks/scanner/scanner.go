@@ -40,20 +40,21 @@ func New(target string, mode ctxpkg.ScanMode, delay time.Duration, client *http.
 }
 
 // Run executes all checks with context cancellation support.
-func (s *Scanner) Run(ctx context.Context) (map[string][]report.Finding, error) {
+// It returns findings by check ID and per-check execution errors.
+func (s *Scanner) Run(ctx context.Context) (map[string][]report.Finding, map[string]error, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.Target, nil)
 	if err != nil {
-		return nil, fmt.Errorf("invalid target URL: %w", err)
+		return nil, nil, fmt.Errorf("invalid target URL: %w", err)
 	}
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	bodyBytes, err := engine.DecodeResponseBody(resp)
 	if err != nil {
 		resp.Body.Close()
-		return nil, fmt.Errorf("failed to decode response body: %w", err)
+		return nil, nil, fmt.Errorf("failed to decode response body: %w", err)
 	}
 	defer resp.Body.Close() // Close the original response body after reading
 
@@ -68,6 +69,7 @@ func (s *Scanner) Run(ctx context.Context) (map[string][]report.Finding, error) 
 
 	scanCtx := &ctxpkg.Context{
 		Target:            s.Target,
+		RequestContext:    ctx,
 		Mode:              s.Mode,
 		InitialURL:        initialURL,
 		FinalURL:          finalURL,
@@ -80,6 +82,7 @@ func (s *Scanner) Run(ctx context.Context) (map[string][]report.Finding, error) 
 	}
 
 	resultsByCheck := make(map[string][]report.Finding)
+	checkErrors := make(map[string]error)
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -95,7 +98,7 @@ func (s *Scanner) Run(ctx context.Context) (map[string][]report.Finding, error) 
 	for _, check := range checksToRun {
 		select {
 		case <-ctx.Done():
-			return resultsByCheck, ctx.Err()
+			return resultsByCheck, checkErrors, ctx.Err()
 		default:
 		}
 
@@ -115,6 +118,9 @@ func (s *Scanner) Run(ctx context.Context) (map[string][]report.Finding, error) 
 			defer mu.Unlock()
 
 			if err != nil {
+				if _, exists := checkErrors[c.ID]; !exists {
+					checkErrors[c.ID] = err
+				}
 				return
 			}
 
@@ -123,5 +129,5 @@ func (s *Scanner) Run(ctx context.Context) (map[string][]report.Finding, error) 
 	}
 	wg.Wait()
 
-	return resultsByCheck, nil
+	return resultsByCheck, checkErrors, nil
 }

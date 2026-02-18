@@ -3,6 +3,7 @@ package components
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/MOYARU/prs/internal/checks"
@@ -12,15 +13,19 @@ import (
 )
 
 var (
-	commentRegex = regexp.MustCompile(`<!--.*?v?(\d+\.\d+(\.\d+)?).*?-->`)
-	metaRegex    = regexp.MustCompile(`<meta\s+name=["']generator["']\s+content=["']([^"']+)["']`)
-	scriptRegex  = regexp.MustCompile(`<script[^>]+src=["']([^"']+)["']`)
-	// Simple version check map: Software Name -> Min Safe Version
-	safeVersions = map[string]string{
-		"apache": "2.4.50",
-		"nginx":  "1.20.0",
-		"php":    "8.0.0",
-		"jquery": "3.5.0",
+	commentRegex        = regexp.MustCompile(`<!--.*?v?(\d+\.\d+(\.\d+)?).*?-->`)
+	metaRegex           = regexp.MustCompile(`<meta\s+name=["']generator["']\s+content=["']([^"']+)["']`)
+	scriptRegex         = regexp.MustCompile(`<script[^>]+src=["']([^"']+)["']`)
+	componentSignatures = []struct {
+		Name        string
+		SafeVersion string
+		Pattern     *regexp.Regexp
+	}{
+		{Name: "apache", SafeVersion: "2.4.58", Pattern: regexp.MustCompile(`(?i)apache(?:/|\s+)(\d+\.\d+(?:\.\d+)?)`)},
+		{Name: "nginx", SafeVersion: "1.24.0", Pattern: regexp.MustCompile(`(?i)nginx(?:/|\s+)(\d+\.\d+(?:\.\d+)?)`)},
+		{Name: "php", SafeVersion: "8.1.0", Pattern: regexp.MustCompile(`(?i)\bphp(?:/|\s+)(\d+\.\d+(?:\.\d+)?)`)},
+		{Name: "jquery", SafeVersion: "3.6.0", Pattern: regexp.MustCompile(`(?i)jquery(?:[-._]|%2d)?(\d+\.\d+(?:\.\d+)?)`)},
+		{Name: "wordpress", SafeVersion: "6.0.0", Pattern: regexp.MustCompile(`(?i)wordpress(?:\s+|/)?(\d+\.\d+(?:\.\d+)?)`)},
 	}
 )
 
@@ -31,12 +36,16 @@ func CheckVulnerableComponents(ctx *ctxpkg.Context) ([]report.Finding, error) {
 		"Server":       ctx.Response.Header.Get("Server"),
 		"X-Powered-By": ctx.Response.Header.Get("X-Powered-By"),
 	}
+	seen := make(map[string]struct{})
 
 	for header, value := range headersToCheck {
-		if value != "" {
-			if isOutdated(value) {
-				findings = append(findings, createFinding(fmt.Sprintf("%s Header: %s", header, value)))
+		for _, detail := range findOutdatedComponents(value) {
+			key := header + "|" + detail
+			if _, exists := seen[key]; exists {
+				continue
 			}
+			seen[key] = struct{}{}
+			findings = append(findings, createFinding(fmt.Sprintf("%s Header: %s", header, detail)))
 		}
 	}
 
@@ -46,8 +55,13 @@ func CheckVulnerableComponents(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	matches := commentRegex.FindAllStringSubmatch(bodyString, -1)
 	for _, match := range matches {
 		fullComment := match[0]
-		if isOutdated(fullComment) {
-			findings = append(findings, createFinding(fmt.Sprintf("HTML Comment: %s", fullComment)))
+		for _, detail := range findOutdatedComponents(fullComment) {
+			key := "comment|" + detail
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			findings = append(findings, createFinding(fmt.Sprintf("HTML Comment: %s", detail)))
 		}
 	}
 
@@ -55,8 +69,13 @@ func CheckVulnerableComponents(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	metaMatches := metaRegex.FindAllStringSubmatch(bodyString, -1)
 	for _, match := range metaMatches {
 		content := match[1]
-		if isOutdated(content) {
-			findings = append(findings, createFinding(fmt.Sprintf("Meta Generator: %s", content)))
+		for _, detail := range findOutdatedComponents(content) {
+			key := "meta|" + detail
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			findings = append(findings, createFinding(fmt.Sprintf("Meta Generator: %s", detail)))
 		}
 	}
 
@@ -64,31 +83,47 @@ func CheckVulnerableComponents(ctx *ctxpkg.Context) ([]report.Finding, error) {
 	scriptMatches := scriptRegex.FindAllStringSubmatch(bodyString, -1)
 	for _, match := range scriptMatches {
 		src := match[1]
-		// Simple heuristic: check if src contains version numbers
-		if isOutdated(src) {
-			findings = append(findings, createFinding(fmt.Sprintf("Script Source: %s", src)))
+		for _, detail := range findOutdatedComponents(src) {
+			key := "script|" + detail
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			findings = append(findings, createFinding(fmt.Sprintf("Script Source: %s", detail)))
 		}
 	}
 
 	return findings, nil
 }
 
-func isOutdated(versionStr string) bool {
-	v := strings.ToLower(versionStr)
-
-	for software, safeVer := range safeVersions {
-		if strings.Contains(v, software) {
-			// Extract version from string (simple regex)
-			verRegex := regexp.MustCompile(`(\d+\.\d+(\.\d+)?)`)
-			verMatch := verRegex.FindString(v)
-			if verMatch != "" {
-				if compareVersions(verMatch, safeVer) < 0 {
-					return true
+func findOutdatedComponents(text string) []string {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	var details []string
+	for _, sig := range componentSignatures {
+		matches := sig.Pattern.FindAllStringSubmatch(strings.ToLower(text), -1)
+		for _, m := range matches {
+			if len(m) < 2 {
+				continue
+			}
+			version := strings.TrimSpace(m[1])
+			if version == "" {
+				continue
+			}
+			if compareVersions(version, sig.SafeVersion) < 0 {
+				detail := fmt.Sprintf("%s %s (< %s)", sig.Name, version, sig.SafeVersion)
+				if _, ok := seen[detail]; ok {
+					continue
 				}
+				seen[detail] = struct{}{}
+				details = append(details, detail)
 			}
 		}
 	}
-	return false
+	sort.Strings(details)
+	return details
 }
 
 func compareVersions(v1, v2 string) int {

@@ -3,6 +3,7 @@ package ssrf
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -76,7 +77,7 @@ func CheckSSRF(ctx *ctxpkg.Context) ([]report.Finding, error) {
 			u.RawQuery = newParams.Encode()
 			requestURL := u.String()
 
-			req, err := http.NewRequest("GET", requestURL, nil)
+			req, err := newScanRequest(ctx, http.MethodGet, requestURL, nil)
 			if err != nil {
 				continue
 			}
@@ -116,7 +117,7 @@ func CheckSSRF(ctx *ctxpkg.Context) ([]report.Finding, error) {
 				u.RawQuery = newParamsLocal.Encode()
 				localRequestURL := u.String()
 
-				reqLocal, err := http.NewRequest("GET", localRequestURL, nil)
+				reqLocal, err := newScanRequest(ctx, http.MethodGet, localRequestURL, nil)
 				if err != nil {
 					continue
 				}
@@ -181,7 +182,7 @@ func CheckSSRF(ctx *ctxpkg.Context) ([]report.Finding, error) {
 						}
 					}
 
-					req, err := http.NewRequest("POST", targetURL, strings.NewReader(formValues.Encode()))
+					req, err := newScanRequest(ctx, http.MethodPost, targetURL, strings.NewReader(formValues.Encode()))
 					if err != nil {
 						continue
 					}
@@ -301,4 +302,11 @@ func similarityScore(a, b string) float64 {
 		return 0
 	}
 	return float64(inter) / float64(union)
+}
+
+func newScanRequest(scanCtx *ctxpkg.Context, method, target string, body io.Reader) (*http.Request, error) {
+	if scanCtx != nil && scanCtx.RequestContext != nil {
+		return http.NewRequestWithContext(scanCtx.RequestContext, method, target, body)
+	}
+	return http.NewRequest(method, target, body)
 }

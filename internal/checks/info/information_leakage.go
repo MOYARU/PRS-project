@@ -137,7 +137,7 @@ func CheckInformationLeakage(ctx *ctxpkg.Context) ([]report.Finding, error) {
 				defer func() { <-sem }()
 
 				endpointURL := ctx.FinalURL.Scheme + "://" + ctx.FinalURL.Host + endpoint
-				req, err := http.NewRequest("GET", endpointURL, nil)
+				req, err := ctxpkg.NewRequest(ctx, "GET", endpointURL, nil)
 				if err != nil {
 					return
 				}
